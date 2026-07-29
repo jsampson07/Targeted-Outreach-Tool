@@ -1,0 +1,15 @@
+---
+description: Backend layer boundaries, error handling, and auth conventions
+globs: backend/**/*.py
+alwaysApply: false
+---
+
+Layer structure (ARCHITECTURE.md §2): `routers/` are thin — parse the request, call a service, return the result, no business logic. `services/` hold business logic and must be unit-testable with no HTTP client involved. `providers/` implement `ContactProvider` and never touch the DB or know a cache/tiering sequence exists — that logic lives only in `services/contact_discovery.py`.
+
+Error handling (§6, extended in OPEN_QUESTIONS.md "Resolved"): domain code raises a typed `AppException` subclass from `app/core/exceptions.py` (`NotFoundError`, `AuthenticationError`, `ValidationError`, etc.) — never construct `HTTPException` directly in a router or service. One exception handler in `main.py` translates any `AppException` into `{detail, error_code}` JSON, logging `exc.detail` and returning only `exc.user_message` to the client.
+
+Auth: access token is a short-lived, stateless JWT (signature/expiry only, no DB hit). Refresh token is an opaque random string persisted (hashed) in a `refresh_tokens` DB table — not a JWT — so logout can actually revoke it and rotation/reuse-detection can be added later as a purely additive change. No rotation logic in v1 — don't add it unless asked.
+
+JSON-shaped columns (`raw_response`, `match_data`, `eval_breakdown`, `confidence_breakdown`) are `JSONB`, never plain `JSON`. Every FK column is declared with `index=True` at the model level.
+
+No Redis. Caching is Postgres plus an indexed lookup on `Company.domain` — a deliberate, reasoned decision (ARCHITECTURE.md §5.1), not an oversight. Don't suggest adding it unless asked to revisit.

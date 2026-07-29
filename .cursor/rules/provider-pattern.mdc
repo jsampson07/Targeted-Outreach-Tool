@@ -1,0 +1,15 @@
+---
+description: ContactProvider interface contract for all provider implementations
+globs: backend/app/providers/**/*.py
+alwaysApply: false
+---
+
+`ContactProvider` is an ABC (not a Protocol) in `base.py`, implemented identically by `HunterProvider`, `ApolloProvider`, `AnymailProvider`, and `MockProvider`: `search(company_domain: str, role_titles: list[str]) -> ProviderSearchResult`.
+
+Expected failures — rate limits, auth/network errors, zero matches — are never exceptions. Always return `ProviderSearchResult(status=...)` with `SUCCESS`, `RATE_LIMITED`, or `ERROR`. Zero candidates on a successful call is still `SUCCESS`, not a separate status. Only genuinely unexpected failures (e.g. malformed data the provider's own client library can't parse) should raise.
+
+Each provider catches its own HTTP/network exceptions internally and translates them into a status — that translation happens inside the provider, not in the orchestrator.
+
+No provider implementation gets a DB handle, and none is aware a cache exists or which discovery tier is currently being attempted — that logic lives entirely in `contact_discovery.py`. If a change would require a provider to know about the DB, the cache, or the current tier, that's the boundary being violated — stop and flag it instead of implementing it.
+
+`MockProvider` must be a full peer implementation (same ABC, same `ProviderSearchResult` shape) — never a stub with a different shape "to swap out later." This is what makes mock-first development real rather than a workaround.

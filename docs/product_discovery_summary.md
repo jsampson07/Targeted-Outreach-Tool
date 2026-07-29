@@ -1,0 +1,144 @@
+# Targeted Outreach Tool — Product Discovery Summary
+
+*A reference document for scope, decisions, and rationale — built to be re-read throughout development and referenced in interviews.*
+
+---
+
+## Target User
+
+**Primary (v1):** You — a new-grad software engineer job seeker using direct outreach to bypass the ATS, and acting as the tool's own first real user and case study.
+
+**Secondary (post-MVP, architected for but not built for yet):** Other new-grad / early-career job seekers who want the same direct-outreach advantage but lack the tooling or data literacy to do contact discovery and tailored personalization themselves.
+
+---
+
+## Core Problem Statement
+
+New-grad job seekers trying to bypass the ATS via direct outreach face three compounding frictions:
+
+1. **They often don't know who to contact.** The right point of contact may not even be a dedicated recruiter — especially at smaller companies — and they don't want to manually search LinkedIn or company sites to figure it out.
+2. **Contact data from any single source is unreliable.** Emails are frequently stale, guessed, or belong to the wrong person entirely.
+3. **Genuine personalization doesn't scale.** Writing outreach that's actually tailored to each company and role — not generic — takes more time than most job seekers have across many applications.
+
+The result: job seekers send too few high-quality emails, or too many generic ones, with no reliable way to learn what's actually working.
+
+---
+
+## Value Proposition
+
+Given just a company and a role, the tool:
+
+- **Discovers** the most plausible point of contact using a flexible, tiered search strategy (dedicated recruiter → generalist recruiter/talent acquisition → hiring manager → founder/CEO as fallback for small companies), with a transparent, plain-language reason shown whenever it has to fall back.
+- **Verifies** that contact's legitimacy — not role-relevance — across multiple data providers, with a clear confidence signal built from provider verification tier, cross-provider corroboration, employment-currency, domain sanity-checking, and name-collision handling.
+- **Drafts** an outreach email grounded in a real structured comparison between the user's resume and the target job description — not a generic prompt — and automatically checks that draft against a quality rubric before showing it.
+- **Hands off** the final email for the user to copy and send manually, from their own email client. The app never touches send infrastructure — a structural guarantee, not just a policy promise.
+- **Logs** self-reported outcomes (sent / no response / replied / interview) tied to the specific contact-confidence tier and email eval score, so the user can see what's actually converting.
+
+---
+
+## MVP Feature Set (v1)
+
+1. **Auth + user-scoped data model** — lightweight but real, built in from day one so extending to other users later doesn't require a rewrite.
+2. **Company identification step** — user types a company name (not a domain); resolved via a lightweight external lookup (Clearbit Autocomplete) into a list of name+domain candidates the user must explicitly select from — never auto-resolved, even on a single match. Falls back to manual domain entry if no match is found or the lookup fails. Fires once per submitted search in v1, not live-as-you-type.
+3. **Multi-provider contact discovery & resolution pipeline** (the hero problem):
+   - Tiered title/role search strategy (not strict filtering)
+   - Queries 2+ providers (Hunter.io, Apollo.io, Anymail Finder)
+   - Normalizes schemas across providers into one model
+   - Data-legitimacy confidence scoring (verification tier, cross-provider corroboration, employment-currency signal, domain check, name-collision handling)
+   - Graceful degradation when a provider fails, rate-limits, or returns nothing
+   - Caching to avoid redundant, costly lookups
+4. **Resume + JD upload → structured extraction and match/gap analysis** (not raw text stuffed into a prompt)
+5. **Grounded email generation with an automated rubric-based quality check** before the email is ever shown to the user
+6. **Manual outcome logging** linked to the specific contact + generated email + its eval score
+7. **Basic personal analytics view** — reply rate broken down by contact confidence tier and/or email eval score
+8. **Copy-paste-only output** — no programmatic sending, no compose-link integration, no email account OAuth
+
+---
+
+## Deferred Features (with rationale)
+
+| Feature | Why it's deferred |
+|---|---|
+| Gmail OAuth draft/compose integration | Draft-creation scopes typically also grant send capability — building this would downgrade "the app cannot send on your behalf" from a structural guarantee to a policy promise. Rejected for now on principled trust-model grounds; revisit only after everything else is solid. |
+| `mailto:` "open in email client" link | Skipped even though nearly free, to keep zero exceptions to the copy-paste-only design. |
+| Tracking pixels / unique links for automatic open detection | Reliability has degraded broadly due to privacy proxies and image-blocking clients, and covertly tracking a hiring manager's opens has questionable optics for this kind of tool. Manual self-logging used instead. |
+| Scored "role-relevance" ranking metric | Would duplicate the resume↔JD matching engine's job and implies false precision. Transparent, rule-based tiered ranking is used instead; could extend the matching engine later if truly needed. |
+| LinkedIn or additional data source integration | Out of scope for v1; current providers cover the core discovery/verification need. |
+| Multi-user growth features (invites, org/team accounts, admin views) | Real multi-tenancy beyond basic auth isn't needed until there's a second real user. |
+| Iterative multi-turn self-critique/refinement UI | Single-pass eval check is v1; deeper iterative refinement is a natural v1.1+ extension. |
+| Bulk/batch campaigns, browser extension | Adds real UI/infra complexity without serving the two hero problems. |
+| A/B testing of email variants | Needs volume and outcome data that will only exist after v1 has been in real use for a while. |
+| Mobile app | Not core to demonstrating the engineering this project is meant to showcase. |
+| `SEARCHES` table (per-search contact ranking/tier + user-scoped search history) | Deferred until actually needed. Would capture, per search, why a contact ranked where it did for that specific role (distinct from the contact's stable, search-independent `confidence_score`), and would also enable layering user-scoped history on top of the shared `COMPANIES`/`CONTACTS` cache later without touching that cache's design. |
+| Live typeahead company search (debounced, real-time suggestions as the user types) | v1 ships on-submit only — same lookup, same result UI, one call per search. Live typeahead needs debounce timing and request-race handling (a slower in-flight response for an earlier keystroke arriving after a newer one) that on-submit avoids entirely, and Clearbit's real rate limits are still unverified. Purely a frontend upgrade later, isolated from backend/schema. |
+
+---
+
+## Why This Is a Technically Substantial Resume Project
+
+**The competitive reality, addressed head-on:** Contact-finder-plus-AI-email-generator tools already exist as commodity products. That's fine — recruiters don't reward novelty of idea, they reward depth of engineering. This scope is designed so the *idea* being common doesn't matter, because the substance is underneath:
+
+1. **Full-stack breadth** — real auth and a multi-tenant data model from day one, a real backend API, a real frontend, real persistence. Not a script; a system.
+2. **Resilience engineering** — a multi-vendor integration with graceful degradation, fallback logic, and cost-aware caching. This pattern generalizes far beyond this project, which makes it a strong, portable interview story.
+3. **Data modeling & reconciliation** — normalizing conflicting schemas across third-party APIs, disambiguating name collisions, and building a transparent, explainable confidence model instead of hand-waving a single score.
+4. **Applied LLM evaluation, not just LLM calling** — structured extraction, grounded generation, and rubric-based self-evaluation before output is shown. This is the actual differentiator between junior "AI wrapper" work and legitimate applied-AI engineering right now.
+5. **Demonstrated product and security judgment** — several explicit, reasoned deferred-feature decisions (the Gmail OAuth trust tradeoff especially) are strong "why I *didn't* build X" answers, which read as more mature than most new-grad projects that only have "why I built X" answers.
+6. **Real personal outcome data** — because you're the actual first user, you can speak to genuine before/after results instead of a hypothetical, which is a rare and credible impact story for a solo project.
+
+---
+
+## Prioritized Development Roadmap
+
+**Phase 0 — Setup (before writing product code)**
+
+*Provider access research (resolved):*
+- Hunter.io: 50 credits/month on Free tier
+- Apollo.io: 900 credits/seat/year (~75/month) on Free tier
+- Anymail Finder: no ongoing free tier — one-time 14-day trial, 100 credits, then paid only (~$14–29/mo cheapest tier)
+
+*Dev-data strategy (locked): Combined approach*
+- Build the contact-provider layer behind an abstraction/interface from day one, with a mock/fixture provider simulating realistic scenarios (verified vs. guessed emails, cross-provider conflicts, name collisions, rate-limit/timeout failures). This is the primary mode for day-to-day development — not a workaround, but the correct way to build against any costly/rate-limited external dependency.
+- Reserve real Hunter/Apollo free-tier credits for periodic checkpoint validation (confirming the real integration actually works), not routine iteration.
+- Activate the Anymail Finder 14-day trial strategically, late in Phase 2, once the abstraction layer and the other two providers are already working — use the window for real end-to-end validation of the third integration, not general exploration. Confirm at signup whether a card authorization is required.
+- Hold a small paid tier in reserve as a fallback only if mock-first development plus rationed real credits proves genuinely insufficient.
+
+**Data model (locked):** Seven core entities plus a reconciliation layer — `USERS`, `RESUMES`, `JOB_DESCRIPTIONS`, `COMPANIES`, `RAW_PROVIDER_RESULTS`, `CONTACTS`, `GENERATED_EMAILS`, `OUTCOMES`. Key decisions:
+- `COMPANIES` and `CONTACTS` are a shared/global cache (not user-scoped) to enable cross-user credit savings. Not an irreversible choice — a thin `SEARCHES` join table (`user_id` + `contact_id` + `searched_at`) can be layered on top later for per-user history without touching the shared cache underneath.
+- Raw per-provider responses are persisted in `RAW_PROVIDER_RESULTS` — **one row per person-candidate returned, per provider, per company query** (not one row per whole API call). This is forced by consistency with `verification_tier` living on this table: a single call can return multiple people with different tiers, so the row granularity has to be per-person. Each row carries a few structured, queryable fields (candidate name/title/email, verification_tier) plus the full unmodified `raw_response` JSON for audit fidelity. Separately from the reconciled `CONTACTS` record, this enables re-running improved reconciliation logic later without re-spending API credits, and gives a debuggable audit trail for the reconciliation pipeline.
+- `verification_tier` (verified / pattern-guessed / catch-all / unknown) is a per-provider fact, so it lives primarily on `RAW_PROVIDER_RESULTS`. `CONTACTS.best_verification_tier` is a derived/summary copy (the best tier observed across corroborating providers), not an independent second source of truth — it feeds into `confidence_score` alongside cross-provider corroboration, employment-currency, and domain checks.
+- Candidate-level fields (`candidate_name`, `candidate_title`, `candidate_email`) are persisted directly on `RAW_PROVIDER_RESULTS` rather than parsed from `raw_response` on every read. This is a deliberate duplication, not an oversight: normalization happens once, at ingestion (a relatively rare event given credit conservation), rather than being repeated on every reconciliation run, debug session, or reprocessing pass — data here gets read far more often than it's written. It also enables real indexed SQL filtering on these fields, which pure JSON-blob storage would forfeit.
+- Resume-table row growth (even at high tailoring volume, e.g. one resume per application) is not a real concern at this project's realistic scale — an indexed `user_id` keeps lookups fast regardless of row count. If it were ever a UI clutter problem, that's solved with normal product patterns (search/sort/pagination), not a schema change.
+- `OUTCOMES` is an append-only event log (not a single mutable status field), so a funnel (sent → replied → interview) can be tracked over time rather than overwritten — this is what makes the analytics feature meaningful.
+
+**Tech stack (locked):**
+- **Backend:** Python + FastAPI — chosen over Django/Flask/Node for genuine existing Python fluency, native async support (fits the concurrent multi-provider orchestration directly), and Pydantic models doing double duty as both API validation and structured-extraction schemas.
+- **Database:** PostgreSQL + SQLAlchemy + Alembic — matches the relational data model; SQLAlchemy is the standard, most-hireable Python ORM.
+- **Auth:** Hand-rolled JWT (bcrypt/passlib for hashing) — a deliberate build-vs-buy call, same logic as the Gmail OAuth decision: own the pieces core to the "full-stack, understood end to end" story rather than plugging in a vendor.
+- **Frontend:** React + TypeScript, learned for real — closes a genuine credibility gap (prior TS/JS projects were fully AI-written and never read or understood), and directly serves the "full-stack breadth" pillar of the resume-impact case. Validated against current job-market data: Python and SQL are consistently top-tier in demand in 2026 postings, and React holds a commanding lead over Vue/Angular in frontend hiring — this stack maximizes job-posting applicability, not just project fit.
+- **Note:** SQL is already genuine, existing knowledge (not a gap to close, unlike React/TS). Writing the analytics-view rollup queries as raw SQL is a reasonable low-cost default since aggregation-by-tier queries are often more precise via direct SQL than an ORM query builder — but it's optional practice, not a requirement; defaulting to the ORM everywhere, including analytics, is a fine fallback if it saves time.
+
+**Eval rubric (locked):**
+- **Tier 1 — Hard gates (binary, all must pass):** no unsupported claims (every factual claim traceable to the resume), correct contact name/title used. Failure here is disqualifying regardless of other scores — kept separate from graded dimensions rather than blended into one number, same principle as the earlier data-legitimacy/role-relevance split.
+- **Tier 2 — Graded dimensions (e.g. 1–5 each, composited into `eval_score` only if gates pass):** role/company specificity, relevance alignment to the JD match data, tone & professionalism, conciseness, clear call-to-action.
+- **Mechanism:** LLM-as-judge — a second call given the email + resume + JD + match data + rubric, returning structured scores via the same Pydantic-schema pattern used for extraction. Requires periodic manual spot-checking against the judge's scores early on to catch calibration drift — an unvalidated eval is its own form of vibe-coding.
+- **On hard-gate failure:** auto-retry once, silently, with the specific failure fed back as feedback; show the result either way (flagged if it still fails). Deliberately implemented as a standalone, reusable `refine(email, feedback) -> new_email` primitive — not inlined into the generation endpoint — so the deferred v1.1+ interactive multi-turn refine loop is a natural extension (more calls, more triggers, a UI) rather than a rebuild.
+- **Data model note:** `GENERATED_EMAILS.eval_score` holds the Tier 2 composite; consider adding an `eval_breakdown` JSON field to persist the per-dimension scores and gate results, both for debugging and for the analytics view (correlating specific dimensions, not just one blended score, against reply rate).
+
+**Phase 0 status: complete.** Product vision, MVP scope, data model, tech stack, and eval rubric are all locked. Next step is implementation planning/build.
+
+**Phase 1 — Weeks 1–2: Foundation**
+Auth, core data model (users, resumes, JDs, contacts, emails, outcomes), one contact-provider integration working end to end, a basic frontend shell (input company/role, upload resume/JD, view a result). This is where most of your full-stack story lives.
+
+**Phase 2 — Weeks 3–4: The hero problem**
+Add the 2nd and 3rd providers, schema normalization, tiered discovery search, data-legitimacy confidence scoring, name-collision handling, graceful degradation, and caching. Expect this to be where most of your debugging — and most of your best interview material — comes from.
+
+**Phase 3 — Weeks 5–6: Personalization + eval**
+Structured resume/JD extraction, match/gap analysis, grounded email generation, rubric-based quality check. Expect iteration here — getting an eval right rarely happens on the first pass, and that iteration is itself part of the story.
+
+**Phase 4 — Ongoing, in parallel with real use**
+Outcome logging ships as soon as generation works, so real data starts accumulating immediately. The analytics view matures as you actually use the tool in your own job search — this phase can't be rushed, since it's bottlenecked by calendar time and real outreach, not code.
+
+**Phase 5 — Stretch, only after Phases 1–4 are solid**
+Revisit the deferred list if time allows: iterative refinement, additional data sources, multi-user growth features, and only reconsider Gmail OAuth integration if the trust-model concern is resolved to your satisfaction.
+
+**Working habit throughout:** after AI helps you implement any piece, explain out loud why it works and what the alternatives were before moving on. If you can't, that's the piece to slow down on.

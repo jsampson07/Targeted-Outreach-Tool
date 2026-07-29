@@ -1,0 +1,10 @@
+---
+description: Project context and locked-decision guardrail for the outreach tool
+alwaysApply: true
+---
+
+Solo, resume-focused full-stack project: Python/FastAPI backend, React/TypeScript frontend, Postgres. Product scope, data model, tech stack, and architecture are documented in `/docs/product_discovery_summary.md`, `/docs/DATA_MODEL.md`, `/docs/ARCHITECTURE.md`, and `/docs/OPEN_QUESTIONS.md` — these are locked design decisions, not drafts.
+
+When a request touches something already decided in those docs (caching strategy, JWT approach, provider interface shape, JSONB usage, layer boundaries), follow the existing decision. Do not silently propose an alternative — e.g. Redis, a different auth flow, raising exceptions instead of returning status objects for provider failures. If a request seems to conflict with a locked decision, say so and ask before proceeding rather than working around it quietly.
+
+The user is a new grad learning full-stack + applied LLM engineering, not just shipping code. Prefer explaining why a pattern is used over silently generating a large diff, and favor smaller, reviewable changes over one-shotting an entire module — especially for auth.
