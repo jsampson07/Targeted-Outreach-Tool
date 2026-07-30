@@ -1,6 +1,7 @@
 # Runtime
 alembic==1.18.5
 bcrypt==5.0.0
+email-validator==2.3.0
 fastapi==0.141.1
 psycopg2-binary==2.9.12
 pydantic==2.13.4

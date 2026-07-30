@@ -1,6 +1,6 @@
 # Progress Snapshot
 
-*Overwritten each session, not appended to. Reflects verified state as of the session ending 2026-07-30 — verified via `pytest tests/core/test_security.py` (9 passed) against the real `backend/.venv`, plus direct inspection of the new/changed core files. Where something is known only from self-report and hasn't actually been exercised (no server run, no protected route), that's called out explicitly below rather than stated as fact.*
+*Overwritten each session, not appended to. Reflects verified state as of the session ending 2026-07-30 — verified via `pytest tests/schemas/test_auth_schemas.py tests/core/test_security.py` (14 passed) against the real `backend/.venv`. Where something is known only from self-report and hasn't actually been exercised (no server run, no protected route), that's called out explicitly below rather than stated as fact.*
 
 ---
 
@@ -14,7 +14,8 @@
 - **`app/core/enums.py`** — shared `VerificationTier`/`OutcomeEventType` enums in a neutral location, per `ARCHITECTURE.md` §4.4. Confirmed indirectly: the migration's native Postgres enum types were generated from these definitions without duplication errors, which wouldn't have worked if two separate enum classes existed.
 - **9 SQLAlchemy models** (`app/models/`: `user.py`, `resume.py`, `job_description.py`, `company.py`, `raw_provider_result.py`, `contact.py`, `generated_email.py`, `outcome.py`, `refresh_token.py`) — schema-level correctness confirmed via the migration matching `DATA_MODEL.md` §2 field-for-field. **Not confirmed:** whether ORM-level `relationship()` associations were added between models (migrations don't require these, only FK columns — so their presence/absence hasn't been exercised by anything yet).
 - **`app/core/security.py`** — password hashing (bcrypt directly), access-token create/decode (PyJWT), opaque refresh-token generation, SHA-256 refresh-token hashing, and `refresh_token_expires_at()`. **Verified:** `pytest tests/core/test_security.py` — 9 passed (hash/verify round-trip + wrong-password reject; JWT round-trip; expired / wrong `token_type` / tampered signature all raise `AuthenticationError`; refresh hash determinism; generate uniqueness; expires_at window). Zero DB imports in this module, as required.
-- **`backend/requirements.txt`** — created this session (repo previously had no dependency file; packages lived only in `.venv`). Includes `bcrypt` and `PyJWT` as required; `pytest` listed under Dev/test.
+- **Auth Pydantic schemas (User + TokenPairOut only)** — `app/schemas/user.py` (`UserBase`/`UserCreate`/`UserOut`, copied from `DATA_MODEL.md` §2.1) and `app/schemas/auth.py` (`TokenPairOut` with `access_token`, `refresh_token`, `token_type: Literal["bearer"] = "bearer"` — designed here per §2.9's deferred note). **Verified:** `pytest tests/schemas/test_auth_schemas.py` — 5 passed (valid `UserCreate`; invalid email rejected via `EmailStr`; `UserOut` from ORM-like stand-in via `from_attributes`; `token_type` defaults to `"bearer"`; non-`"bearer"` `token_type` raises `ValidationError`). **Not written yet:** RESUMES, JOB_DESCRIPTIONS, COMPANIES, ContactDiscoveryRequest, CompanySearch*, RAW_PROVIDER_RESULTS, CONTACTS, GENERATED_EMAILS, OUTCOMES, RefreshTokenOut — none of those were in scope for this task. Also deliberately deferred: UserLogin, refresh-request body, password complexity rules.
+- **`backend/requirements.txt`** — includes `bcrypt`, `PyJWT`, and now `email-validator==2.3.0` (required for `EmailStr` at import time; not pulled in by pydantic transitively). `pytest` listed under Dev/test.
 
 ### Present, but not yet exercised by anything
 
@@ -23,7 +24,7 @@
 ### Not started
 
 - **`app/main.py`** — confirmed empty (still the placeholder from the original `touch`). No `FastAPI()` app instance, no `CORSMiddleware`, no `AppException` handler registration yet — all three are already-decided work, just not yet written.
-- **`app/schemas/`** — empty except `__init__.py`. None of the Pydantic API schemas from `DATA_MODEL.md` §2 (`UserCreate`/`UserOut`, `ContactDiscoveryRequest`, `TokenPairOut`, etc.) have been written yet.
+- **Remaining `app/schemas/`** — everything except User + TokenPairOut (see Verified above). No Resume/JD/Company/Contact/etc. schemas yet.
 - **`app/routers/`** — empty. No auth endpoints (signup/login/refresh/logout), no resume/JD upload, no discovery endpoint, nothing.
 - **`app/services/`** — empty. No `contact_discovery.py`, no `email_generation.py`, no `eval.py`, no `company_resolution.py`. Auth *service* persistence (RefreshToken rows) is also still ahead — only the pure crypto helpers exist.
 - **`app/providers/`** — empty. `ContactProvider` ABC and `MockProvider` (the mock-first foundation `ARCHITECTURE.md` §4 is built around) don't exist yet.
@@ -42,6 +43,7 @@
 4. **DB-level unique constraints not visible in `DATA_MODEL.md`'s Pydantic schemas** — `users.email`, `companies.domain` (already required by `ARCHITECTURE.md` §5), and `refresh_tokens.token_hash` (already called for in `DATA_MODEL.md` §2.9's own reasoning) are all enforced in the migration. Not a deviation, just a reminder: `DATA_MODEL.md`'s Pydantic classes were never meant to show DB constraints — **the migration file is the actual source of truth for DB-level constraints going forward**, not the schema doc.
 5. **Table count corrected**: both `DATA_MODEL.md` and `product_discovery_summary.md` briefly said "8" after `REFRESH_TOKENS` was added; actual (and now corrected) count is **9**. Already fixed in both docs.
 6. **Auth crypto choices locked in code (not previously specified in the docs):** (a) passwords hashed with the `bcrypt` library directly, not passlib — passlib is unmaintained and hits an unresolved `bcrypt.__about__` AttributeError on modern bcrypt; (b) refresh tokens hashed with plain SHA-256 (deterministic hex digest), not bcrypt, because `DATA_MODEL.md` §2.9's unique-indexed `token_hash` lookup (`WHERE token_hash = hash(token)`) requires equality/determinism and bcrypt is salted/non-deterministic; (c) access token TTL = 30 minutes, refresh token TTL = 30 days (`Settings.access_token_expire_minutes` / `refresh_token_expire_days`) — no prior doc specified these numbers. JWT library is PyJWT, not python-jose.
+7. **`TokenPairOut` designed at auth-schema time** (was deferred by `DATA_MODEL.md` §2.9): lives in `app/schemas/auth.py`, fields `access_token` / `refresh_token` / `token_type: Literal["bearer"] = "bearer"`. Lowercase `"bearer"` is the JSON body convention (OAuth2 RFC 6749 §5.1), distinct from the HTTP `Authorization: Bearer …` header capitalization.
 
 ---
 
@@ -50,8 +52,8 @@
 Per the agreed Phase 1 build order (vertical slice, not horizontal layers) — **finish auth end to end**:
 
 1. ~~Password hashing and JWT issuing/validation~~ — done (`security.py` + tests).
-2. `app/schemas/` — at minimum `UserCreate`/`UserOut` and a `TokenPairOut` (not yet defined anywhere, per `DATA_MODEL.md` §2.9's own note that it's "built at auth-implementation time").
-3. Auth service + `app/routers/auth.py` — signup, login, refresh, logout (persist/lookup hashed refresh tokens).
+2. ~~`app/schemas/` for auth~~ — done (`UserCreate`/`UserOut` + `TokenPairOut`; other entity schemas still ahead).
+3. Auth service + `app/routers/auth.py` — signup, login, refresh, logout (persist/lookup hashed refresh tokens). Includes UserLogin / refresh-request schemas when those endpoints are designed.
 4. Wire `app/main.py` for real: instantiate the app, register the `AppException` handler, add `CORSMiddleware` — all previously decided, none yet built (confirmed empty).
 5. First actual execution of `app/core/deps.py` (via a real protected route) — JWT validation now lives solely in `security.py`; this step is "run the dependency against a real request," not "verify field names."
 
