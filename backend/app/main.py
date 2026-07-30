@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
 from app.routers import auth as auth_router
+from app.routers import resume as resume_router
 
 settings = get_settings()
 
@@ -17,3 +18,4 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(auth_router.router, prefix="/auth")
+app.include_router(resume_router.router, prefix="/resumes")

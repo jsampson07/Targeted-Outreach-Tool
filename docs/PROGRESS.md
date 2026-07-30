@@ -1,6 +1,6 @@
 # Progress Snapshot
 
-*Overwritten each session, not appended to. Reflects verified state as of the session ending 2026-07-30 — verified via `pytest tests/routers/test_auth.py tests/schemas/test_auth_schemas.py tests/core/test_security.py` (**28 passed**) against real Postgres (`Settings.database_url` / docker-compose) and the real `backend/.venv`.*
+*Overwritten each session, not appended to. Reflects verified state as of the session ending 2026-07-30 — verified via `pytest tests/routers/test_resume.py tests/services/test_resume_service.py tests/routers/test_auth.py tests/schemas/test_auth_schemas.py tests/core/test_security.py` (**42 passed**) against real Postgres (`Settings.database_url` / docker-compose) and the real `backend/.venv`.*
 
 ---
 
@@ -18,19 +18,20 @@
 - **`app/core/exceptions.py`** — `AppException` hierarchy including new `ConflictError` (409). Handler response key renamed from `detail` → `user_message` (still returns `error_code`). Exercised by integration tests (409 signup conflict, 401 auth failures assert `user_message` / `error_code`).
 - **`app/core/deps.py`** — **`get_current_user` / `get_db` now exercised via real HTTP requests** (`GET /auth/me` happy path + missing/expired/tampered token cases in `tests/routers/test_auth.py`). Closes the prior "present but not exercised" open item.
 - **Auth service + router + `main.py` wiring** — `app/services/auth.py` (`create_user`, `authenticate_user`, `issue_token_pair`, `refresh_access_token` without rotation, idempotent `revoke_refresh_token`); `app/routers/auth.py` (`POST /signup` 201, `/login`, `/refresh`, `/logout` 204, `GET /me`); `app/main.py` instantiates FastAPI, registers exception handlers, adds `CORSMiddleware` with `allow_credentials=False` and origins from settings, mounts auth at `/auth`. **Verified:** `pytest tests/routers/test_auth.py` — 14 passed against real Postgres (transaction-rollback `conftest.py`, not sqlite).
-- **Integration test harness** — `backend/tests/conftest.py` + `httpx` in `requirements.txt`. Suite hits docker-compose Postgres via nested transactions / savepoints so service-layer `db.commit()` calls don't leak rows across tests.
-- **`backend/requirements.txt`** — includes `bcrypt`, `PyJWT`, `email-validator`, `pytest`, and now `httpx==0.28.1` (required by FastAPI/Starlette `TestClient`).
+- **Resume schemas + service + router** — `app/schemas/resume.py` (`ResumeCreate`/`ResumeOut`/`ExperienceEntry`/`ResumeExtraction` per `DATA_MODEL.md` §2.2); `app/services/resume.py` (`parse_pdf` via pypdf, `parse_docx` via python-docx, `create_resume_from_upload` with extension/size/empty-text validation and `extracted_data=None`, `get_resumes_for_user`, `get_resume_by_id` filtered on `id` + `user_id`); `app/routers/resume.py` mounted at `/resumes` (`POST` multipart upload → 201, `GET` list, `GET /{resume_id}` detail), all behind `get_current_user`. No blob storage; original file discarded after text extraction. No update/delete (resumes immutable). **Verified:** `pytest tests/routers/test_resume.py tests/services/test_resume_service.py` — **14 passed** against real Postgres (ownership isolation + other-user detail returns 404 identical to missing id; unauthenticated → 401 on all three routes).
+- **Integration test harness** — `backend/tests/conftest.py` + `httpx` in `requirements.txt`. Suite hits docker-compose Postgres via nested transactions / savepoints so service-layer `db.commit()` calls don't leak rows across tests. Resume fixtures live at `tests/fixtures/sample_resume.pdf` and `sample_resume.docx` (real readable text).
+- **`backend/requirements.txt`** — includes `bcrypt`, `PyJWT`, `email-validator`, `pytest`, `httpx==0.28.1` (required by FastAPI/Starlette `TestClient`), plus `pypdf==6.14.2` and `python-docx==1.2.0` for resume parsing.
 
 ### Present, but not yet exercised by anything
 
-*(none for auth stack — deps/exceptions/main/router/service are covered by the integration suite above.)*
+*(none for auth or resume stacks — deps/exceptions/main/router/service are covered by the integration suite above.)*
 
 ### Not started
 
-- **Remaining `app/schemas/`** — Resume/JD/Company/Contact/etc. (everything outside User + auth request/response schemas).
-- **Non-auth routers/services** — resume/JD upload, discovery, email generation, eval, company resolution.
+- **Remaining `app/schemas/`** — JD/Company/Contact/etc. (everything outside User + auth request/response + Resume schemas).
+- **Non-auth routers/services** — resume upload/list/detail is done. Still not started: JD upload, company/contact logic, discovery, email generation, eval.
 - **`app/providers/`** — empty. `ContactProvider` ABC and `MockProvider` don't exist yet.
-- **`app/llm/`** — empty.
+- **`app/llm/`** — empty. Structured resume/JD extraction (Phase 3) depends on `app/llm/client.py` and is deliberately not started here — `extracted_data` stays `None` on upload.
 - **Frontend** — scaffolded only (Vite + React + TS). No custom components, pages, or API calls built yet.
 - **Refresh-token rotation / reuse-detection**, **cookie-based refresh transport**, **login rate-limiting** — explicitly deferred in `OPEN_QUESTIONS.md`, not built.
 
@@ -49,15 +50,15 @@
 7. **Auth crypto choices locked in code (not previously specified in the docs):** (a) passwords hashed with the `bcrypt` library directly, not passlib — passlib is unmaintained and hits an unresolved `bcrypt.__about__` AttributeError on modern bcrypt; (b) refresh tokens hashed with plain SHA-256 (deterministic hex digest), not bcrypt, because `DATA_MODEL.md` §2.9's unique-indexed `token_hash` lookup (`WHERE token_hash = hash(token)`) requires equality/determinism and bcrypt is salted/non-deterministic; (c) access token TTL = 30 minutes, refresh token TTL = 30 days (`Settings.access_token_expire_minutes` / `refresh_token_expire_days`) — no prior doc specified these numbers. JWT library is PyJWT, not python-jose.
 8. **`TokenPairOut` designed at auth-schema time** (was deferred by `DATA_MODEL.md` §2.9): lives in `app/schemas/auth.py`, fields `access_token` / `refresh_token` / `token_type: Literal["bearer"] = "bearer"`. Lowercase `"bearer"` is the JSON body convention (OAuth2 RFC 6749 §5.1), distinct from the HTTP `Authorization: Bearer …` header capitalization.
 9. **`AppException` handler client key is `user_message`**, not `detail`. Renamed before any frontend depended on the old key; `OPEN_QUESTIONS.md` Resolved entry and `.cursor/rules/architecture.mdc` updated to match.
+10. **Resume upload parsing / limits locked in code (not previously specified in the docs):** (a) PDF text extraction via `pypdf`, DOCX via `python-docx` — libraries chosen at implementation time; neither was named in `ARCHITECTURE.md`/`DATA_MODEL.md` (only that parsing happens in the router/service before `ResumeCreate`); (b) hard upload size cap of **2MB**, rejected with `ValidationError` ("File too large"); (c) after strip, extracted text shorter than **50 characters** is rejected with `ValidationError` and a scanned-image plain-language message — guards against image-only PDFs that parse "successfully" to near-empty text. Original file bytes are never persisted (no blob storage / no `file_path` column); only `raw_text` is stored, with `extracted_data=None` until Phase 3 LLM extraction.
 
 ---
 
 ## What's next
 
-Per the agreed Phase 1 build order (vertical slice, not horizontal layers) — **auth end-to-end is done**. Next:
+Per the agreed Phase 1 build order (vertical slice, not horizontal layers) — **auth and resume upload are done**. Next:
 
-1. Resume upload (schema + service + router + protected route).
-2. JD upload.
-3. First `MockProvider`-backed discovery call.
+1. JD upload.
+2. First `MockProvider`-backed discovery call.
 
-Same order agreed earlier, unchanged.
+Same order agreed earlier; resume step completed this session.

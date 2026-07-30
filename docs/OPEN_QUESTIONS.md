@@ -24,6 +24,9 @@ v1 ships refresh tokens as plain JSON in the request/response body — not as an
 ### Login rate-limiting / brute-force protection
 Not implemented. `/auth/login` and `/auth/signup` currently accept unbounded attempts. Named here so the gap is explicit rather than a silent omission (same documentation pattern as Redis and Gmail OAuth). Stated trigger to revisit: before any real deployment beyond personal use.
 
+### Upload body-size enforcement (app-level check vs. transport-level limit)
+The 2MB cap in `create_resume_from_upload` runs *after* Starlette has already fully received and spooled the multipart body — it stops an oversized file from being parsed/persisted, but not the cost of receiving it. No ASGI-level body-size middleware or reverse-proxy limit (e.g. nginx's `client_max_body_size`) exists yet. Named here so the gap is explicit rather than a silent omission (same pattern as login rate-limiting). Stated trigger to revisit: before any real deployment beyond personal use, or whenever a reverse proxy is introduced.
+
 ---
 
 ## Not yet discussed (on the list, conversation hasn't reached them)
