@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 30
+    # Complex types (list[str]) must be a JSON-encoded string in .env if
+    # overriding the default — e.g. CORS_ALLOWED_ORIGINS='["http://localhost:5173","http://localhost:3000"]'.
+    # A bare comma-separated value will not parse correctly under pydantic-settings.
+    cors_allowed_origins: list[str] = ["http://localhost:5173"]
 
 
 @lru_cache

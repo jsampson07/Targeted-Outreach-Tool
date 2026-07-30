@@ -16,15 +16,7 @@ class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
 
-# Import every model so Base.metadata is fully populated for Alembic
-# autogenerate (DATA_MODEL.md §3.3). Keep this list in dependency order
-# for readability; import side-effects register tables on Base.
-from app.models.user import User  # noqa: E402, F401
-from app.models.company import Company  # noqa: E402, F401
-from app.models.resume import Resume  # noqa: E402, F401
-from app.models.refresh_token import RefreshToken  # noqa: E402, F401
-from app.models.job_description import JobDescription  # noqa: E402, F401
-from app.models.raw_provider_result import RawProviderResult  # noqa: E402, F401
-from app.models.contact import Contact  # noqa: E402, F401
-from app.models.generated_email import GeneratedEmail  # noqa: E402, F401
-from app.models.outcome import Outcome  # noqa: E402, F401
+# Model modules import Base from this file. Do NOT import models here —
+# that creates a circular import whenever anything loads a model first
+# (e.g. deps → User → Base → User). Alembic registers models explicitly
+# in alembic/env.py so Base.metadata is complete for autogenerate.

@@ -51,6 +51,11 @@ class ValidationError(AppException):
     default_user_message = "The provided data was invalid."
 
 
+class ConflictError(AppException):
+    status_code = 409
+    default_user_message = "A conflicting resource already exists."
+
+
 class ProviderUnavailableError(AppException):
     """For contact_discovery.py's own genuinely-unexpected failures only —
     NOT for routine rate-limit/timeout handling, which stays inside
@@ -77,7 +82,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=exc.status_code,
             content={
-                "detail": exc.user_message,
+                "user_message": exc.user_message,
                 "error_code": exc.__class__.__name__,
             },
         )

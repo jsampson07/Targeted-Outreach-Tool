@@ -1,21 +1,7 @@
-from app.models.company import Company
-from app.models.contact import Contact
-from app.models.generated_email import GeneratedEmail
-from app.models.job_description import JobDescription
-from app.models.outcome import Outcome
-from app.models.raw_provider_result import RawProviderResult
-from app.models.refresh_token import RefreshToken
-from app.models.resume import Resume
-from app.models.user import User
+"""ORM models package.
 
-__all__ = [
-    "User",
-    "Company",
-    "Resume",
-    "RefreshToken",
-    "JobDescription",
-    "RawProviderResult",
-    "Contact",
-    "GeneratedEmail",
-    "Outcome",
-]
+Import from submodules (e.g. ``from app.models.user import User``).
+Table registration for Alembic lives in ``app.db.base`` — keep this
+package ``__init__`` free of eager model imports so we don't cycle with
+``base.py`` (model module → Base → model module).
+"""
