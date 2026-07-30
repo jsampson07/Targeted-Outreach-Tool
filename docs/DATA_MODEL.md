@@ -1,6 +1,6 @@
 # Data Model Reference
 
-*Companion to `product_discovery_summary.md`, which locks the 7 core entities and their relationships, and to `ARCHITECTURE.md`. This document covers how those entities are expressed as Pydantic schemas and how the first Alembic migration is structured.*
+*Companion to `product_discovery_summary.md`, which locks the 9 core entities and their relationships, and to `ARCHITECTURE.md`. This document covers how those entities are expressed as Pydantic schemas and how the first Alembic migration is structured.*
 
 ---
 
@@ -266,15 +266,33 @@ class OutcomeOut(BaseModel):
 
 **Decision:** No `OutcomeUpdate` schema. `OUTCOMES` is an append-only event log per the product doc — the only valid operations are "log a new event" and "read history." A need to edit or delete a row would indicate the model is being used incorrectly (a correction should be a new appended event, not a mutation).
 
+### 2.9 REFRESH_TOKENS
+
+```python
+class RefreshTokenOut(BaseModel):
+    id: int
+    user_id: int
+    expires_at: datetime
+    revoked_at: datetime | None
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+```
+
+**Decision:** No `RefreshTokenCreate`, and no route ever returns `RefreshTokenOut` as part of a login/refresh response body. Like `COMPANIES` and `GENERATED_EMAILS`, this entity is populated as a side effect (of login or token refresh), not a direct user-facing create. `RefreshTokenOut` deliberately excludes `token_hash` entirely — the same allowlist principle that keeps `UserOut` from ever exposing `password_hash` in §2.1. This schema exists for potential internal/debug use (e.g. a future "list my active sessions" feature), not for the actual login/refresh response, which will need its own `TokenPairOut`-style schema (`access_token`, `refresh_token`, `token_type`) carrying the raw token values — that schema is built at auth-implementation time, not decided here.
+
+**Reasoning:** Added during Phase 1 planning as a direct consequence of the JWT auth-flow decision (see `OPEN_QUESTIONS.md`'s "Resolved" section): the refresh token is deliberately an opaque random string, not a JWT, so it can be revoked before its natural expiry — logout only works if something persists to revoke. `token_hash` (not the raw token) is what's stored, mirroring the same reasoning as `UserCreate.password` vs. the ORM's `password_hash` column in §2.1 — never persist a secret in a form that's directly usable if the row leaks. `token_hash` carries a unique index for the same lookup-performance reasoning as `Company.domain` in `ARCHITECTURE.md` §5 — the refresh endpoint looks a presented token up by its hash on every call.
+
 ---
 
 ## 3. Alembic Migration Plan
 
 ### 3.1 Single initial migration
 
-**Decision:** All 7 tables are created in one initial migration, not split into one migration per table.
+**Decision:** All 9 tables are created in one initial migration, not split into one migration per table.
 
-**Reasoning:** The general Alembic convention (one migration per logical change) exists to track incremental schema discovery over time. That doesn't apply here — the schema was fully locked (all entities, relationships, and field-level decisions above) before any migration is written. Splitting into 7 migrations would re-enact a design process that's already finished.
+**Reasoning:** The general Alembic convention (one migration per logical change) exists to track incremental schema discovery over time. That doesn't apply here — the schema was fully locked (all entities, relationships, and field-level decisions above) before any migration is written. Splitting into 9 migrations would re-enact a design process that's already finished.
+
+`REFRESH_TOKENS` (added during Phase 1 planning, after the original seven entities were locked) is still included in this same initial migration rather than treated as a later addition. The distinction that matters isn't *when* a table was decided, it's whether it was fully decided before the migration file gets written — `REFRESH_TOKENS`' schema was locked before any migration exists, exactly like the original seven; it just wasn't locked at the same moment they were.
 
 **Where multiple migrations remain correct:** Genuinely later, uninformed-at-this-point additions — e.g. the deferred `SEARCHES` table from the product doc's deferred-features list — since that decision, by design, comes only after real usage informs whether it's needed.
 
@@ -322,23 +340,23 @@ def downgrade():
 
 **Reasoning:** Postgres implements enums as a genuine native type, not a `VARCHAR` with a constraint. `downgrade()` dropping the table does *not* drop the type — re-running `upgrade()` after a `downgrade()` without the explicit `drop()` fails with "type already exists." Autogenerate sometimes misses this in the generated `downgrade()`, so it must be manually checked, not trusted blindly.
 
-**Note:** `ProviderStatus` (see `ARCHITECTURE.md` §4.4) is *not* one of these — it's a transient orchestration signal inside `contact_discovery.py`, never written to a column, so it has no migration footprint.
+**Note:** `ProviderStatus` (see `ARCHITECTURE.md` §4.4) is *not* one of these — it's a transient orchestration signal inside `contact_discovery.py`, never written to a column, so it has no migration footprint. `REFRESH_TOKENS` has no enum columns either — it's untouched by this section.
 
 ### 3.5 JSON columns use `JSONB`, not `JSON`
 
 **Decision:** All JSON-shaped columns — `raw_response` (`RAW_PROVIDER_RESULTS`), `eval_breakdown` and `match_data` (`GENERATED_EMAILS`), and `confidence_breakdown` (`CONTACTS`) — use Postgres's `JSONB` type.
 
-**Reasoning:** `JSON` stores an exact text copy (preserving formatting/key order) and re-parses on every read. `JSONB` stores a decomposed binary format — no formatting preserved, but indexable and faster to query. None of these columns need exact-formatting preservation, and some (e.g. `match_data`) may plausibly need to be queried into later for debugging/analytics. No scenario in this schema favors plain `JSON`.
+**Reasoning:** `JSON` stores an exact text copy (preserving formatting/key order) and re-parses on every read. `JSONB` stores a decomposed binary format — no formatting preserved, but indexable and faster to query. None of these columns need exact-formatting preservation, and some (e.g. `match_data`) may plausibly need to be queried into later for debugging/analytics. No scenario in this schema favors plain `JSON`. `REFRESH_TOKENS` has no JSON-shaped columns and is unaffected by this decision.
 
 ### 3.6 Foreign keys require explicit indexing
 
-**Decision:** Every foreign key column is declared with `index=True` at the model level: `resumes.user_id`, `job_descriptions.company_id`, `raw_provider_results.company_id`, `contacts.company_id`, `generated_emails.contact_id/resume_id/job_description_id`, `outcomes.generated_email_id`.
+**Decision:** Every foreign key column is declared with `index=True` at the model level: `resumes.user_id`, `refresh_tokens.user_id`, `job_descriptions.company_id`, `raw_provider_results.company_id`, `contacts.company_id`, `generated_emails.contact_id/resume_id/job_description_id`, `outcomes.generated_email_id`.
 
 **Reasoning:** Postgres automatically indexes primary keys and `unique=True` columns, but **not** foreign key columns. Columns like `generated_emails.contact_id` will be queried constantly (fetching a contact's emails, analytics joins) — without an explicit index, that's a sequential scan as tables grow. Autogenerate mirrors exactly what the SQLAlchemy models specify, so this must be decided at the model layer, not patched into the migration afterward.
 
 ### 3.7 Migration workflow
 
-1. Write all 7 model files in `app/models/`, with `index=True` on every FK and `JSONB` on every JSON-shaped column decided upfront.
+1. Write all 9 model files in `app/models/`, with `index=True` on every FK and `JSONB` on every JSON-shaped column decided upfront.
 2. `alembic revision --autogenerate -m "initial schema"`.
 3. **Manually review before running:** enum `drop()` calls present in `downgrade()`, every FK column indexed, `JSONB` (not `JSON`) picked up correctly, table creation order matches the dependency graph (`USERS`/`COMPANIES` first, `OUTCOMES` last).
 4. `alembic upgrade head` against local Postgres.
@@ -349,6 +367,7 @@ def downgrade():
 ```
 USERS ─────────────┐
                     ├──> RESUMES
+                    ├──> REFRESH_TOKENS
 COMPANIES ──────────┼──> JOB_DESCRIPTIONS
                     ├──> RAW_PROVIDER_RESULTS
                     └──> CONTACTS
