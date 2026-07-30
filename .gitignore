@@ -1,1 +1,6 @@
 /backend/.venv
+/backend/.env
+.tools/
+/backend/app/__pycache__/
+/backend/app/core/__pycache__/
+/backend/alembic/__pycache__/
