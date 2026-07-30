@@ -1,22 +1,15 @@
-# Destination in repo: backend/app/core/deps.py
-#
-# Requires: pip install python-jose[cryptography]
-# (SessionLocal, User, and Settings are assumed to already exist per the
-# locked db/models/config structure — not created in this pass.)
+"""FastAPI dependencies: DB session and current-user resolution."""
 
 from collections.abc import Generator
 
 from fastapi import Depends
 from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
 from app.core.exceptions import AuthenticationError
+from app.core.security import decode_access_token
 from app.db.session import SessionLocal
 from app.models.user import User
-
-settings = get_settings()
 
 # tokenUrl points at the login route that issues the access token.
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
@@ -38,35 +31,17 @@ def get_current_user(
 ) -> User:
     """Decodes and validates the access token, then loads the user.
 
-    Raises AuthenticationError (a domain exception, not HTTPException
-    directly) on any failure — see exceptions.py and the central handler
-    in main.py for why that translation stays centralized rather than
-    happening ad hoc here.
+    JWT signature/expiry/token_type checks live in decode_access_token
+    (security.py) — this dependency only loads the User row. Raises
+    AuthenticationError on any failure (see exceptions.py and the
+    central handler in main.py).
     """
-    try:
-        payload = jwt.decode(
-            token,
-            settings.jwt_secret_key,
-            algorithms=[settings.jwt_algorithm],
-        )
-    except JWTError as exc:
-        raise AuthenticationError(
-            detail=f"JWT decode failed: {exc}"
-        ) from exc
+    access = decode_access_token(token)
 
-    user_id = payload.get("sub")
-    token_type = payload.get("type")
-
-    # "type" distinguishes access tokens from refresh tokens sharing the
-    # same secret — without this check, a refresh token could be replayed
-    # as if it were a valid access token.
-    if user_id is None or token_type != "access":
-        raise AuthenticationError(
-            detail=f"Unexpected token payload: sub={user_id!r}, type={token_type!r}"
-        )
-
-    user = db.query(User).filter(User.id == int(user_id)).first()
+    user = db.query(User).filter(User.id == access.user_id).first()
     if user is None:
-        raise AuthenticationError(detail=f"No user found for id={user_id}")
+        raise AuthenticationError(
+            detail=f"No user found for id={access.user_id}"
+        )
 
     return user
