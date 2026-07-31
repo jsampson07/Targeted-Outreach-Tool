@@ -11,6 +11,9 @@ class JobDescription(Base):
     __tablename__ = "job_descriptions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id"), index=True, nullable=False
+    )
     company_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("companies.id"), index=True, nullable=False
     )

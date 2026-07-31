@@ -27,6 +27,12 @@ Not implemented. `/auth/login` and `/auth/signup` currently accept unbounded att
 ### Upload body-size enforcement (app-level check vs. transport-level limit)
 The 2MB cap in `create_resume_from_upload` runs *after* Starlette has already fully received and spooled the multipart body — it stops an oversized file from being parsed/persisted, but not the cost of receiving it. No ASGI-level body-size middleware or reverse-proxy limit (e.g. nginx's `client_max_body_size`) exists yet. Named here so the gap is explicit rather than a silent omission (same pattern as login rate-limiting). Stated trigger to revisit: before any real deployment beyond personal use, or whenever a reverse proxy is introduced.
 
+### JD deduplication / extraction-result caching
+Not implemented. Every JD submission creates a new row, even if the underlying posting text is identical across users — no dedup or reuse. Storage cost of duplicated text is negligible and not the concern; the real cost this would guard against is redundant LLM extraction calls once Phase 3 exists. Not worth building against: extraction doesn't exist yet, and there's no real multi-user evidence of duplicate postings (v1's primary user is a single person). Deferred until both conditions are real: Phase 3 extraction is built and its actual per-call cost is known, and a second real user exists to make cross-user duplication an observed pattern rather than a hypothetical. If revisited, keying a unique index off a hash of the normalized raw_text (not company_id + role_title, which doesn't safely disambiguate different versions of a posting) is the safer lookup — mirrors the get-or-create pattern already used for COMPANIES.domain.
+
+### JD read-access control
+JOB_DESCRIPTIONS has user_id, but this task adds no GET route for it — the only response containing a JD's raw_text is the 201 returned to the same request that created it. Stated trigger to revisit: the moment any GET route is added that reads JOB_DESCRIPTIONS, it must filter on id AND user_id together in one query (same pattern already used for GET /resumes/{id}), not return rows to any authenticated caller regardless of ownership.
+
 ---
 
 ## Not yet discussed (on the list, conversation hasn't reached them)
