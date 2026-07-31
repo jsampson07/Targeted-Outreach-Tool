@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import NotFoundError, ValidationError
 from app.models.resume import Resume
 from app.models.user import User
+from app.schemas.resume import ResumeCreate
 
 _MAX_UPLOAD_BYTES = 2 * 1024 * 1024  # 2MB
 _MIN_RAW_TEXT_CHARS = 50
