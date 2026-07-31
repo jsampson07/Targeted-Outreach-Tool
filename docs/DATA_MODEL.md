@@ -175,10 +175,12 @@ class ContactOut(BaseModel):
 
 ### 2.6.1 ContactDiscoveryResponse (wraps ContactOut for the discovery endpoint only)
 
+```python
 class ContactDiscoveryResponse(BaseModel):
     contact: ContactOut | None
     fallback_reason: str | None
     tier_used: str | None
+```
 
 **Decision:** Per-search context (which tier hit, why earlier tiers were skipped) is
 returned transiently by the discovery endpoint — never persisted, never added to
