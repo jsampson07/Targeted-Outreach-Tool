@@ -173,6 +173,20 @@ class ContactOut(BaseModel):
 
 **Deferred, not decided:** Which subset of `confidence_breakdown` fields the frontend actually surfaces to the user is a UI-copy decision, not a schema decision — the schema intentionally exposes the full object; the frontend picks what to render.
 
+### 2.6.1 ContactDiscoveryResponse (wraps ContactOut for the discovery endpoint only)
+
+class ContactDiscoveryResponse(BaseModel):
+    contact: ContactOut | None
+    fallback_reason: str | None
+    tier_used: str | None
+
+**Decision:** Per-search context (which tier hit, why earlier tiers were skipped) is
+returned transiently by the discovery endpoint — never persisted, never added to
+`ContactOut`. `ContactOut` stays the stable, search-independent resource; this mirrors
+the same stable-vs-per-search boundary `product_discovery_summary.md` already draws
+when explaining why `SEARCHES` is deferred. `contact` is nullable to represent every
+tier being exhausted with zero candidates found.
+
 ### 2.7 GENERATED_EMAILS
 
 ```python

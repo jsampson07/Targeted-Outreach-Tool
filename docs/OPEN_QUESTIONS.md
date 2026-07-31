@@ -33,6 +33,17 @@ Not implemented. Every JD submission creates a new row, even if the underlying p
 ### JD read-access control
 JOB_DESCRIPTIONS has user_id, but this task adds no GET route for it — the only response containing a JD's raw_text is the 201 returned to the same request that created it. Stated trigger to revisit: the moment any GET route is added that reads JOB_DESCRIPTIONS, it must filter on id AND user_id together in one query (same pattern already used for GET /resumes/{id}), not return rows to any authenticated caller regardless of ownership.
 
+### Stubbed during the first discovery-pipeline build (defaulted, not designed)
+- **Name-collision resolution**: detection is real; resolution is highest-tier-wins,
+  first-returned as tiebreak. Revisit once real multi-candidate collisions are observed.
+- **Employment-currency signal**: hardcoded "unknown" for all candidates until real
+  provider response shapes are inspected in Phase 2.
+- **Confidence score formula**: initial weighted formula, unvalidated. Needs calibration
+  once real reconciliation data exists — same caution as the LLM-judge calibration note.
+- **Company.name for discovery-only creation**: naive placeholder derived from domain
+  when no existing row exists. Superseded once §7's company-name-resolution endpoint
+  is built and wired ahead of discovery.
+
 ---
 
 ## Not yet discussed (on the list, conversation hasn't reached them)
@@ -64,3 +75,9 @@ JOB_DESCRIPTIONS has user_id, but this task adds no GET route for it — the onl
 
 ### CORS setup for frontend↔backend
 **Resolved (Phase 1 planning):** `CORSMiddleware` allowing the local frontend dev server's origin in development, with the allowed origin(s) read from `settings` rather than hardcoded, so a deployed environment can use a different value with no code change. No further design debate — standard practice.
+
+
+### role_title's effect on tiering
+**Resolved:** Unused by discovery for now — all four tiers search fixed, generic
+title lists regardless of role. Revisit only if the generic hiring-manager tier
+proves too noisy in real use.
