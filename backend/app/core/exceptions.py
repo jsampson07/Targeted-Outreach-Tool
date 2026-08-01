@@ -70,6 +70,19 @@ class ProviderUnavailableError(AppException):
     )
 
 
+class LLMExtractionError(AppException):
+    """Raised when the shared LLMClient cannot produce schema-valid JSON
+    after exhausting configured parse/validation retries, or when the
+    Anthropic call itself fails. 502 mirrors ProviderUnavailableError —
+    the upstream model/API is the failing dependency, not the client.
+    """
+
+    status_code = 502
+    default_user_message = (
+        "Couldn't extract structured data from that document. Please try again."
+    )
+
+
 # --- Registration (goes in main.py, not exceptions.py, in the real repo) ---
 
 def register_exception_handlers(app: FastAPI) -> None:

@@ -29,6 +29,13 @@ class Settings(BaseSettings):
     # Default stays mock so routine local use never spends Hunter credits.
     contact_provider: Literal["mock", "hunter"] = "mock"
     hunter_api_key: str | None = None
+    # LLM extraction (ARCHITECTURE.md §3). Key optional so non-LLM routes
+    # still boot; LLMClient fails clearly at call time if missing.
+    anthropic_api_key: str | None = None
+    # Haiku: cost-appropriate for structured extraction; not the most capable model.
+    llm_model: str = "claude-haiku-4-5"
+    # Retries after the first parse/validation failure (1 → one retry, two attempts).
+    llm_max_retries: int = 1
 
 
 @lru_cache

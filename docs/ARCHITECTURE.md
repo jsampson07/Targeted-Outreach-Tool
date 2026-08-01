@@ -52,13 +52,22 @@ backend/
 
 ## 3. LLM Client: Shared Thin Wrapper
 
-**Decision:** A single `app/llm/client.py` wrapper (`LLMClient.complete(...)`) is called by all three LLM-touching services — `extraction.py`, `email_generation.py`, and `eval.py` — rather than each service making its own direct call to the Anthropic API.
+**Decision:** A single `app/llm/client.py` wrapper (`LLMClient.complete(...)`) is called by all LLM-touching services rather than each service making its own direct call to the Anthropic API. There will eventually be **four** such services:
 
-**Reasoning:** All three call sites share the same underlying shape: prompt in, Pydantic-validated JSON out. This shared shape is already known from the product doc (structured extraction, grounded generation, rubric-based judging all follow the same pattern) — it isn't a guess about future needs, which is what would normally argue for waiting. A shared wrapper gives one place to swap models, add retry/timeout/backoff logic, and log token usage/cost across all three call sites, and lets tests substitute a fake client (mirroring the `mock.py` provider pattern) instead of monkeypatching HTTP calls in three separate files.
+| Service | Role |
+|---|---|
+| `extraction.py` | Single-document structured extraction (resume → `ResumeExtraction`, JD → `JDExtraction`) |
+| `matching.py` *(future)* | Match/gap analysis comparing a `ResumeExtraction` to a `JDExtraction` → `MatchData` |
+| `email_generation.py` *(future)* | Grounded outreach draft from contact + match data |
+| `eval.py` *(future)* | Rubric-based judging of a generated email |
+
+`matching.py` is its own file because match/gap analysis is a **comparison between two already-extracted documents**, not a single-document extraction (so it does not belong in `extraction.py`) and not something `eval.py` should be responsible for producing (`eval.py` *consumes* `MatchData` as a verification reference — see `DATA_MODEL.md` §2.7).
+
+**Reasoning:** All four call sites share the same underlying shape: prompt in, Pydantic-validated JSON out. This shared shape is already known from the product doc (structured extraction, match analysis, grounded generation, rubric-based judging all follow the same pattern) — it isn't a guess about future needs, which is what would normally argue for waiting. A shared wrapper gives one place to swap models, add retry/timeout/backoff logic, and log token usage/cost across all call sites, and lets tests substitute a fake client (mirroring the `mock.py` provider pattern) instead of monkeypatching HTTP calls in multiple files.
 
 **Alternatives considered:**
-- *Each service hits the Anthropic API directly.* Simpler per-file, but triplicates request-building and response-parsing logic, and any fix (timeout, retry, logging) has to be applied in three places — a real risk of silent drift, not just a style cost.
-- *Skip the wrapper for now, write direct calls, refactor once patterns are clear.* Reasonable when the shared shape is genuinely uncertain. Rejected here specifically because the shape is *already* certain (all three specified in the product doc as the same prompt-in/validated-JSON-out pattern), so deferring would mean paying refactor cost later for zero information gained in the meantime — and that refactor would land during Phase 3, the highest-iteration-pressure phase per the roadmap.
+- *Each service hits the Anthropic API directly.* Simpler per-file, but duplicates request-building and response-parsing logic, and any fix (timeout, retry, logging) has to be applied in multiple places — a real risk of silent drift, not just a style cost.
+- *Skip the wrapper for now, write direct calls, refactor once patterns are clear.* Reasonable when the shared shape is genuinely uncertain. Rejected here specifically because the shape is *already* certain (all call sites specified in the product doc as the same prompt-in/validated-JSON-out pattern), so deferring would mean paying refactor cost later for zero information gained in the meantime — and that refactor would land during Phase 3, the highest-iteration-pressure phase per the roadmap.
 
 **Cost accepted:** An extra layer of indirection. If one call site later needs a meaningfully different call shape (e.g. multi-turn), the wrapper either grows conditional params or gets bypassed for that one case — worth watching for, but not a blocker today.
 

@@ -1,4 +1,4 @@
-"""Resume HTTP endpoints: upload, list, and detail (auth required)."""
+"""Resume HTTP endpoints: upload, list, detail, and extract (auth required)."""
 
 from fastapi import APIRouter, Depends, File, UploadFile, status
 from sqlalchemy.orm import Session
@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.deps import get_current_user, get_db
 from app.models.user import User
 from app.schemas.resume import ResumeOut
+from app.services import extraction as extraction_service
 from app.services import resume as resume_service
 
 router = APIRouter(tags=["resumes"])
@@ -35,3 +36,15 @@ def get_resume(
     current_user: User = Depends(get_current_user),
 ) -> ResumeOut:
     return resume_service.get_resume_by_id(db, current_user, resume_id)
+
+
+@router.post("/{resume_id}/extract", response_model=ResumeOut)
+async def extract_resume(
+    resume_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ResumeOut:
+    """Re-runnable structured extraction — overwrites ``extracted_data``."""
+    return await extraction_service.extract_resume(
+        db, resume_id, current_user.id
+    )
