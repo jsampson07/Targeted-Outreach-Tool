@@ -57,7 +57,7 @@ backend/
 | Service | Role |
 |---|---|
 | `extraction.py` | Single-document structured extraction (resume → `ResumeExtraction`, JD → `JDExtraction`) |
-| `matching.py` *(future)* | Match/gap analysis comparing a `ResumeExtraction` to a `JDExtraction` → `MatchData` |
+| `matching.py` | Match/gap analysis comparing a `ResumeExtraction` to a `JDExtraction` → `MatchData` |
 | `email_generation.py` *(future)* | Grounded outreach draft from contact + match data |
 | `eval.py` *(future)* | Rubric-based judging of a generated email |
 
