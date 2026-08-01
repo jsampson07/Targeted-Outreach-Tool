@@ -1,14 +1,4 @@
 /backend/.venv
 /backend/.env
+__pycache__/
 .tools/
-/backend/app/__pycache__/
-/backend/app/core/__pycache__/
-/backend/alembic/__pycache__/
-/backend/alembic/versions/__pycache__/
-/backend/app/schemas/__pycache__/
-/backend/app/services/__pycache__/
-/backend/tests/__pycache__/
-/backend/tests/core/__pycache__/
-/backend/tests/routers/__pycache__/
-/backend/tests/services/__pycache__/
-/backend/tests/schemas/__pycache__/

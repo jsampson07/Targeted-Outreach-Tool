@@ -30,14 +30,16 @@ The 2MB cap in `create_resume_from_upload` runs *after* Starlette has already fu
 ### JD deduplication / extraction-result caching
 Not implemented. Every JD submission creates a new row, even if the underlying posting text is identical across users — no dedup or reuse. Storage cost of duplicated text is negligible and not the concern; the real cost this would guard against is redundant LLM extraction calls once Phase 3 exists. Not worth building against: extraction doesn't exist yet, and there's no real multi-user evidence of duplicate postings (v1's primary user is a single person). Deferred until both conditions are real: Phase 3 extraction is built and its actual per-call cost is known, and a second real user exists to make cross-user duplication an observed pattern rather than a hypothetical. If revisited, keying a unique index off a hash of the normalized raw_text (not company_id + role_title, which doesn't safely disambiguate different versions of a posting) is the safer lookup — mirrors the get-or-create pattern already used for COMPANIES.domain.
 
+### Hunter Domain Search pagination / truncation
+
+HunterProvider fetches at most 100 emails per domain (limit=100, no pagination — see PROGRESS.md Deviations #25) and does not log when a domain actually has more on file, so results are silently truncated past that cap. Deferred as low-risk for a v1 aimed at typical small/mid-size target companies. Stated trigger to revisit: before running live-key checkpoint validation against a large company, or immediately if a real search returns suspiciously few or unexpected candidates.
+
 ### JD read-access control
 JOB_DESCRIPTIONS has user_id, but this task adds no GET route for it — the only response containing a JD's raw_text is the 201 returned to the same request that created it. Stated trigger to revisit: the moment any GET route is added that reads JOB_DESCRIPTIONS, it must filter on id AND user_id together in one query (same pattern already used for GET /resumes/{id}), not return rows to any authenticated caller regardless of ownership.
 
 ### Stubbed during the first discovery-pipeline build (defaulted, not designed)
 - **Name-collision resolution**: detection is real; resolution is highest-tier-wins,
   first-returned as tiebreak. Revisit once real multi-candidate collisions are observed.
-- **Employment-currency signal**: hardcoded "unknown" for all candidates until real
-  provider response shapes are inspected in Phase 2.
 - **Confidence score formula**: initial weighted formula, unvalidated. Needs calibration
   once real reconciliation data exists — same caution as the LLM-judge calibration note.
 - **Company.name for discovery-only creation**: naive placeholder derived from domain
@@ -81,3 +83,6 @@ JOB_DESCRIPTIONS has user_id, but this task adds no GET route for it — the onl
 **Resolved:** Unused by discovery for now — all four tiers search fixed, generic
 title lists regardless of role. Revisit only if the generic hiring-manager tier
 proves too noisy in real use.
+
+### Employment-currency signal (Hunter response shape inspected)
+**Resolved (HunterProvider integration):** Hunter Domain Search *does* return date-like fields — `sources[].last_seen_on` / `extracted_on` (when the email was last/first observed on a public page) and `verification.date` (when Hunter last ran deliverability verification). None of these is an employment-currency signal: they speak to email-source freshness or SMTP-check recency, not whether the person still holds the listed role at the company. Fabricating `"current"` / `"stale"` from those fields would mislabel the confidence input. `contact_discovery.py` therefore keeps `employment_currency_signal = "unknown"` hardcoded. Revisit only if a future provider (or a richer Hunter product surface) exposes a real current-employment / last-title-change signal.
