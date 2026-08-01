@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -25,6 +26,9 @@ class Settings(BaseSettings):
     # overriding the default — e.g. CORS_ALLOWED_ORIGINS='["http://localhost:5173","http://localhost:3000"]'.
     # A bare comma-separated value will not parse correctly under pydantic-settings.
     cors_allowed_origins: list[str] = ["http://localhost:5173"]
+    # Default stays mock so routine local use never spends Hunter credits.
+    contact_provider: Literal["mock", "hunter"] = "mock"
+    hunter_api_key: str | None = None
 
 
 @lru_cache

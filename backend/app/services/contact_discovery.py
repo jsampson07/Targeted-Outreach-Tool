@@ -291,8 +291,9 @@ async def discover_contact(
             # Structurally impossible with a single provider; keep the field
             # real so Phase 2 only has to implement the check.
             cross_provider_corroboration = False
-            # Hardcoded until real provider response shapes are inspected in
-            # Phase 2 (OPEN_QUESTIONS.md) — no reliable currency signal yet.
+            # Hardcoded "unknown": Hunter's last_seen_on / verification.date are
+            # email-source / deliverability dates, not employment currency
+            # (OPEN_QUESTIONS.md Resolved).
             employment_currency_signal = "unknown"
 
             confidence_score, breakdown = _compute_confidence(
