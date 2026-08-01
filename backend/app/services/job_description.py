@@ -1,6 +1,7 @@
 """Job description submission: persist pasted plain text with company + role.
 
-LLM structured extraction is Phase 3 — extracted_data is always None here.
+Create leaves ``extracted_data=None``; structured extraction is a separate
+retryable step in ``app/services/extraction.py``.
 """
 
 from sqlalchemy.orm import Session
@@ -42,9 +43,26 @@ def create_job_description(
     return jd
 
 
-def get_job_description_by_id(db: Session, jd_id: int) -> JobDescription:
-    """Plain lookup by id — for internal use by other services, not the router."""
-    jd = db.query(JobDescription).filter(JobDescription.id == jd_id).first()
+def get_job_description_by_id(
+    db: Session, user: User, jd_id: int
+) -> JobDescription:
+    """Fetch one JD by id AND user_id — no ownership leak via 403.
+
+    Same ownership pattern as ``get_resume_by_id``. Used by extraction
+    (and any future read path); wrong-owner and missing id both 404.
+    """
+    jd = (
+        db.query(JobDescription)
+        .filter(
+            JobDescription.id == jd_id,
+            JobDescription.user_id == user.id,
+        )
+        .first()
+    )
     if jd is None:
-        raise NotFoundError(detail=f"JobDescription id={jd_id} not found")
+        raise NotFoundError(
+            detail=(
+                f"JobDescription id={jd_id} not found for user_id={user.id}"
+            )
+        )
     return jd

@@ -1,6 +1,7 @@
 """Resume upload and retrieval: parse PDF/DOCX to text, persist raw_text only.
 
-LLM structured extraction is Phase 3 — extracted_data is always None here.
+Upload leaves ``extracted_data=None``; structured extraction is a separate
+retryable step in ``app/services/extraction.py``.
 """
 
 from io import BytesIO
