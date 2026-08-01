@@ -1,6 +1,6 @@
 # Progress Snapshot
 
-*Overwritten each session, not appended to. Reflects verified state as of the session ending 2026-08-01 — LLM extraction slice (`app/llm/` + `extraction.py` + extract endpoints). Full suite: `pytest` → **93 passed** against real Postgres (transaction-rollback `conftest.py`; Anthropic SDK fully mocked — no live LLM credits).*
+*Overwritten each session, not appended to. Reflects verified state as of the session ending 2026-08-01 — match/gap analysis slice (`matching.py` + `MatchData` schemas + `matching_prompt`). Full suite: `pytest` → **96 passed** against real Postgres (transaction-rollback `conftest.py`; Anthropic SDK fully mocked — no live LLM credits). Actual terminal line: `96 passed, 59 warnings in 10.22s`.*
 
 ---
 
@@ -11,30 +11,32 @@
 - **Postgres via Docker Compose** — `docker-compose.yml` at repo root, `postgres:18`, volume mounted at `/var/lib/postgresql` (not `.../data` — the 18+ layout requirement). Container runs cleanly.
 - **`backend/alembic/versions/bd31568efd53_initial_schema.py`** — applied successfully (`alembic upgrade head` ran with no errors against the real DB). Independently reviewed against `DATA_MODEL.md` §3.4–§3.8. **9 tables**.
 - **`backend/alembic/versions/97807b9a3c89_add_user_id_to_job_descriptions.py`** — additive migration adding `JOB_DESCRIPTIONS.user_id`. Confirmed applied.
-- **`app/core/config.py`, `app/db/base.py`, `app/db/session.py`** — settings-sourced DB URL, JWT, CORS, `contact_provider` / `hunter_api_key`, plus new LLM settings: `anthropic_api_key`, `llm_model` (default `claude-haiku-4-5`), `llm_max_retries` (default `1`). `.env.example` updated.
+- **`app/core/config.py`, `app/db/base.py`, `app/db/session.py`** — settings-sourced DB URL, JWT, CORS, `contact_provider` / `hunter_api_key`, plus LLM settings: `anthropic_api_key`, `llm_model` (default `claude-haiku-4-5`), `llm_max_retries` (default `1`). `.env.example` updated.
 - **`app/core/enums.py`** — shared `VerificationTier`/`OutcomeEventType` in a neutral location.
 - **9 SQLAlchemy models** — FK columns only, no ORM `relationship()` associations.
 - **`app/core/security.py`** — **Verified:** `pytest tests/core/test_security.py` — **9 passed**.
 - **Auth Pydantic schemas** — `app/schemas/user.py`, `app/schemas/auth.py`.
-- **`app/core/exceptions.py`** — `AppException` hierarchy including `ConflictError` (409) and new `LLMExtractionError` (502). Handler returns `{user_message, error_code}`.
+- **`app/core/exceptions.py`** — `AppException` hierarchy including `ConflictError` (409) and `LLMExtractionError` (502). Handler returns `{user_message, error_code}`.
 - **`app/core/deps.py`** — `get_current_user` / `get_db` exercised via HTTP auth tests.
 - **Auth service + router + `main.py` wiring** — **Verified:** `pytest tests/routers/test_auth.py` — **14 passed**.
-- **Resume schemas + service + router** — upload/list/detail unchanged; plus new `POST /resumes/{resume_id}/extract`. **Verified (prior + extract):** resume router/service suites still green; extract covered below.
-- **Job-description schemas + service + router** — create unchanged; `get_job_description_by_id` now filters on `id` + `user_id` (ownership, same as resumes); plus new `POST /job-descriptions/{jd_id}/extract`. **Verified:** create suite still green; extract covered below.
+- **Resume schemas + service + router** — upload/list/detail + `POST /resumes/{resume_id}/extract`.
+- **Job-description schemas + service + router** — create + ownership-filtered `get_job_description_by_id` + `POST /job-descriptions/{jd_id}/extract`.
 - **MockProvider-backed contact discovery pipeline** — **Verified:** `pytest tests/services/test_contact_discovery.py` — **8 passed**.
 - **HunterProvider** — **Verified:** `pytest tests/providers/test_hunter_provider.py` — **12 passed** (HTTP mocked).
 - **Company name resolution (Clearbit)** — **Verified:** `pytest tests/services/test_company_resolution.py tests/routers/test_company_resolution.py` — **7 passed** (5 service + 2 router).
-- **LLM layer — shared client + structured extraction (this session):**
-  - **`app/llm/client.py`** — `LLMClient` wrapping `AsyncAnthropic`. `async complete(prompt, response_schema) -> BaseModel`: calls Messages API, parses JSON (strips optional markdown fences), validates with the given Pydantic schema, retries up to `settings.llm_max_retries` on parse/validation failure (feeds prior raw response + error back as a correction turn), raises `LLMExtractionError` (502) if retries exhausted or the Anthropic call fails. Model / retry count / API key from `Settings` — not hardcoded. Extraction services never import the Anthropic SDK.
-  - **`app/llm/prompts.py`** — prompt templates for resume → `ResumeExtraction` and JD → `JDExtraction` (schemas reused from `app/schemas/`, not redefined).
-  - **`app/services/extraction.py`** — `async extract_resume(db, resume_id, user_id)` / `async extract_job_description(db, jd_id, user_id)`: ownership-filtered fetch via existing helpers, `LLMClient.complete`, persist `extracted_data` (overwrite on re-run), commit, return row. Optional `llm_client=` for tests.
-  - **Routers** — `POST /resumes/{resume_id}/extract` → `ResumeOut`; `POST /job-descriptions/{jd_id}/extract` → `JobDescriptionOut`; both behind `get_current_user`. Idempotent retry = call again.
-  - **Verified:**
-    - `pytest tests/llm/test_client.py` — **5 passed** (success; one retry-then-success; retry-exhausted → `LLMExtractionError`; markdown-fenced JSON; missing API key). Anthropic mocked via `unittest.mock` on `AsyncAnthropic` — no live calls.
-    - `pytest tests/services/test_extraction.py` — **8 passed** (resume + JD: happy path, wrong-owner → `NotFoundError`, missing id → `NotFoundError`, re-extraction overwrites). `LLMClient` injected/mocked; `asyncio.run` (no `pytest-asyncio`).
-    - `pytest tests/routers/test_extraction.py` — **6 passed** (resume + JD: happy path 200 with `extracted_data`, unauthenticated → 401, wrong owner → 404).
+- **LLM layer — shared client + structured extraction (prior session):**
+  - **`app/llm/client.py`** — `LLMClient` wrapping `AsyncAnthropic`. `async complete(prompt, response_schema) -> BaseModel`.
+  - **`app/llm/prompts.py`** — resume/JD extraction prompts + (this session) `matching_prompt`.
+  - **`app/services/extraction.py`** — `extract_resume` / `extract_job_description` with optional `llm_client=`.
+  - **Routers** — `POST /resumes/{resume_id}/extract` → `ResumeOut`; `POST /job-descriptions/{jd_id}/extract` → `JobDescriptionOut`.
+  - **Verified:** `pytest tests/llm/test_client.py` — **5 passed**; `tests/services/test_extraction.py` — **8 passed**; `tests/routers/test_extraction.py` — **6 passed**.
+- **LLM layer — match/gap analysis (this session):**
+  - **`app/schemas/generated_email.py`** — `SkillMatch`, `ExperienceAlignment`, `MatchData` only (per `DATA_MODEL.md` §2.7). Deliberately omits `GeneratedEmailOut` / eval schemas — those belong to a later task.
+  - **`app/llm/prompts.py`** — `matching_prompt(resume_extraction, jd_extraction)` embeds both extractions as JSON and instructs the model to check *every* JD skill/responsibility (complete comparison for eval's later ground-truth use, not a strongest-matches shortlist).
+  - **`app/services/matching.py`** — `async generate_match_data(resume_extraction, jd_extraction, *, llm_client=None) -> MatchData`. Takes already-extracted Pydantic objects; no DB session, no router, no ownership/existence checks. Calls `LLMClient.complete(prompt, MatchData)` and returns the result directly; `LLMExtractionError` propagates unchanged.
+  - **Verified:** `pytest tests/services/test_matching.py` — **3 passed** (happy path + `response_schema=MatchData`; prompt incorporates JD + resume fixture content; `LLMExtractionError` propagates). No DB fixture.
 - **Integration test harness** — `backend/tests/conftest.py` + real Postgres nested transactions.
-- **`backend/requirements.txt`** — adds `anthropic==0.120.2`. No `pytest-asyncio` / `respx`.
+- **`backend/requirements.txt`** — includes `anthropic==0.120.2`. No `pytest-asyncio` / `respx`.
 
 ### Present, but not yet exercised by anything
 
@@ -42,8 +44,7 @@
 
 ### Not started
 
-- **`app/services/matching.py`** — match/gap analysis (`ResumeExtraction` × `JDExtraction` → `MatchData`). Immediate next LLM task; see `ARCHITECTURE.md` §3 / `OPEN_QUESTIONS.md` Resolved.
-- **Email generation + eval** — `email_generation.py` / `eval.py` not started.
+- **Email generation + eval** — `email_generation.py` / `eval.py` not started. Immediate next LLM task is `email_generation.py` (which will call `generate_match_data`).
 - **Remaining real contact providers** — `ApolloProvider` / `AnymailProvider` deferred.
 - **Frontend** — scaffolded only (Vite + React + TS).
 - **Refresh-token rotation / reuse-detection**, **cookie-based refresh transport**, **login rate-limiting** — deferred in `OPEN_QUESTIONS.md`.
@@ -79,21 +80,25 @@
 23. **Hunter tier-matching** — case-insensitive substring of `position`.
 24. **`CONTACT_PROVIDER` settings flag** (`mock`/`hunter`, default `mock`).
 25. **Hunter credit-conservation cache** is instance-local, in-process, keyed by `company_domain`.
-26. **LLM extraction implementation choices locked this session (not previously numeric in the docs):**
-    - **Default model:** `claude-haiku-4-5` — cost-appropriate for structured extraction; not Sonnet/Opus.
+26. **LLM extraction implementation choices locked previously:**
+    - **Default model:** `claude-haiku-4-5`.
     - **`llm_max_retries` default `1`** — one correction retry after the first parse/validation failure (two attempts total).
-    - **`LLMExtractionError.status_code = 502`** — same class of "upstream dependency failed" as `ProviderUnavailableError`.
-    - **`LLMClient.complete` is `async`** and uses `AsyncAnthropic` (signature deviation from a sync sketch; matches the rest of the async external-IO style).
-    - **`max_tokens=4096`** hardcoded on the client for extraction-sized payloads (not a Settings field).
-    - **`get_job_description_by_id(db, user, jd_id)`** now ownership-filters on `user_id` (was id-only); required once extract became a read path returning `raw_text`.
-
-27. **`extraction.py`'s `_user_for_id` helper introduces an avoidable extra DB query per extraction call — accepted as minor debt, not fixed.** Both `/extract` routers already receive a full `User` object via `get_current_user`, but pass only `current_user.id` into `extraction_service.extract_resume`/`extract_job_description`, which then re-fetches that same row via `_user_for_id` just to satisfy `get_resume_by_id`/`get_job_description_by_id`'s existing `User`-object signature. Cost is one extra indexed PK lookup per extraction call — real but trivial at this scale, not a correctness issue. Deferred rather than fixed now because, unlike the rate-limit-retry asymmetry above, this isn't a real design tradeoff — the fix is unambiguous and low-risk (accept `current_user: User` directly in both `extraction.py` functions, drop `_user_for_id`, update both router call sites to pass `current_user` instead of `current_user.id`), just not worth a Cursor round-trip on the current timeline. Revisit opportunistically next time `extraction.py` is touched for another reason (e.g. when `matching.py` is built and needs the same ownership-check pattern — a natural moment to fix both at once).
+    - **`LLMExtractionError.status_code = 502`**.
+    - **`LLMClient.complete` is `async`** and uses `AsyncAnthropic`.
+    - **`max_tokens=4096`** hardcoded on the client.
+    - **`get_job_description_by_id(db, user, jd_id)`** ownership-filters on `user_id`.
+27. **`extraction.py`'s `_user_for_id` helper introduces an avoidable extra DB query per extraction call — accepted as minor debt, not fixed.** Prior note suggested revisiting when `matching.py` was built; that trigger did not apply — `matching.py` takes already-extracted Pydantic objects and never touches the DB / ownership helpers. Fix remains: accept `current_user: User` directly in both `extraction.py` functions, drop `_user_for_id`, update both router call sites. Revisit opportunistically next time `extraction.py` is touched for another reason.
+28. **Match/gap analysis implementation choices locked this session:**
+    - **`MatchData` / `SkillMatch` / `ExperienceAlignment` live in `app/schemas/generated_email.py`**, even though `GeneratedEmailOut` itself is not built yet — file name matches the eventual persistence home (`GENERATED_EMAILS.match_data`) rather than inventing a `match.py` schema module.
+    - **`matching_prompt` serializes both extractions via `model_dump_json(indent=2)`** inside fenced JSON blocks, and embeds `MatchData.model_json_schema()` the same way extraction prompts do — keeps the structured-output contract consistent across LLM call sites.
+    - **No dedicated match/gap HTTP endpoint** — deliberate; see `OPEN_QUESTIONS.md` Resolved. Product surfacing happens later via `match_data` on the generated-email response.
+    - **`generate_match_data` does not check `extracted_data is not None`** — that check belongs to the future caller (`email_generation.py`) that loads DB rows.
 
 ---
 
 ## What's next
 
-1. **`app/services/matching.py`** — match/gap analysis producing `MatchData` from a `ResumeExtraction` + `JDExtraction` (dedicated service per `ARCHITECTURE.md` §3). Immediate next LLM task; then email generation + eval.
+1. **`app/services/email_generation.py`** — grounded outreach draft from contact + match data (will call `generate_match_data`); then `eval.py` for the rubric-based quality check. Immediate next LLM task.
 2. **Frontend** — thin end-to-end flow: company resolution → discovery → resume/JD upload → extract → generated email.
 3. **Stretch, only if time remains:** Apollo/Anymail, outcome-logging polish, basic analytics view.
 
@@ -101,6 +106,7 @@
 
 ## Doc notes from this session
 
-- **`DATA_MODEL.md`:** no edit. `ResumeOut` / `JobDescriptionOut` already expose `extracted_data` and are sufficient as extract-endpoint response models — nothing built here is inconsistent with the locked schemas.
-- **`product_discovery_summary.md`:** Phase 3 updated — extraction is a user-triggered slice ahead of match/gap, not "LLM layer still fully unbuilt."
-- **`ARCHITECTURE.md` §3 / `OPEN_QUESTIONS.md` Resolved:** updated for four LLM services (`matching.py`) and the extraction-trigger decision.
+- **`DATA_MODEL.md`:** no edit. Built `SkillMatch` / `ExperienceAlignment` / `MatchData` match §2.7 exactly; `GeneratedEmailOut` / eval schemas correctly deferred.
+- **`product_discovery_summary.md`:** MVP feature #4 clarified — match/gap analysis surfaces on the generated-email response, not as a separate earlier preview UI. Phase 3 updated to mark extraction + matching built, with `email_generation.py` / `eval.py` remaining.
+- **`ARCHITECTURE.md` §3:** removed the `*(future)*` tag from `matching.py`. Left `email_generation.py` and `eval.py` tagged as future.
+- **`OPEN_QUESTIONS.md`:** new Resolved entry — "Does `matching.py` get its own endpoint?" — documents the no-endpoint decision and the recompute/re-pay rationale. Also tightened the earlier "dedicated `matching.py` service" entry to reflect that it is now built.

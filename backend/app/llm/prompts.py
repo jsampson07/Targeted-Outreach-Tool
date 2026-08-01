@@ -1,4 +1,4 @@
-"""Prompt templates for structured LLM extraction.
+"""Prompt templates for structured LLM calls.
 
 Schemas live in ``app/schemas/`` — this module only formats prompts that
 instruct the model to emit JSON matching those existing shapes.
@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 
+from app.schemas.generated_email import MatchData
 from app.schemas.job_description import JDExtraction
 from app.schemas.resume import ResumeExtraction
 
@@ -52,5 +53,54 @@ def jd_extraction_prompt(raw_text: str) -> str:
         "Job description text:\n"
         "---\n"
         f"{raw_text}\n"
+        "---\n"
+    )
+
+
+def matching_prompt(
+    resume_extraction: ResumeExtraction,
+    jd_extraction: JDExtraction,
+) -> str:
+    """Build the user prompt for resume×JD → complete ``MatchData``.
+
+    Completeness matters: ``MatchData`` is later used as eval's ground-truth
+    reference for unsupported-claim detection (DATA_MODEL.md §2.7), not merely
+    a shortlist of the strongest matches for generation.
+    """
+    schema_json = json.dumps(MatchData.model_json_schema(), indent=2)
+    resume_json = resume_extraction.model_dump_json(indent=2)
+    jd_json = jd_extraction.model_dump_json(indent=2)
+    return (
+        "Compare the structured resume extraction to the structured job "
+        "description extraction below and produce a COMPLETE match/gap "
+        "analysis.\n"
+        "Return ONLY a single JSON object that validates against this "
+        "JSON Schema — no markdown fences, no commentary, no extra keys.\n\n"
+        f"JSON Schema:\n{schema_json}\n\n"
+        "Rules:\n"
+        "- skill_matches: one entry for EVERY item in the JD's "
+        "required_skills — not just the strongest matches. Set matched=true "
+        "only when the resume clearly supports that requirement; put brief "
+        "supporting text in resume_evidence, otherwise null.\n"
+        "- experience_alignment: one entry for EVERY item in the JD's "
+        "responsibilities. strength must be one of \"strong\", \"partial\", "
+        "or \"none\"; resume_evidence is null when strength is \"none\".\n"
+        "- unmatched_jd_requirements: JD required_skills (and any other JD "
+        "requirements) with no credible resume support — the disallow-list "
+        "for later email generation.\n"
+        "- notable_resume_strengths: resume strengths worth considering even "
+        "if not listed as JD requirements.\n"
+        "- overall_match_summary: a short framing of the overall fit "
+        "(a few sentences).\n"
+        "- Do not invent resume evidence that is not present in the resume "
+        "extraction. Completeness of the comparison matters more than "
+        "optimism about the match.\n\n"
+        "Resume extraction (JSON):\n"
+        "---\n"
+        f"{resume_json}\n"
+        "---\n\n"
+        "Job description extraction (JSON):\n"
+        "---\n"
+        f"{jd_json}\n"
         "---\n"
     )
