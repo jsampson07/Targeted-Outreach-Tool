@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 
-from app.schemas.generated_email import MatchData
+from app.schemas.generated_email import EmailDraft, EvalResult, MatchData
 from app.schemas.job_description import JDExtraction
 from app.schemas.resume import ResumeExtraction
 
@@ -102,5 +102,138 @@ def matching_prompt(
         "Job description extraction (JSON):\n"
         "---\n"
         f"{jd_json}\n"
+        "---\n"
+    )
+
+
+def email_generation_prompt(
+    contact_name: str | None,
+    contact_title: str | None,
+    company_name: str,
+    role_title: str,
+    match_data: MatchData,
+) -> str:
+    """Build the user prompt for grounded outreach → ``EmailDraft``."""
+    schema_json = json.dumps(EmailDraft.model_json_schema(), indent=2)
+    match_json = match_data.model_dump_json(indent=2)
+    contact_name_repr = (
+        json.dumps(contact_name) if contact_name is not None else "null"
+    )
+    contact_title_repr = (
+        json.dumps(contact_title) if contact_title is not None else "null"
+    )
+    return (
+        "Write a short, professional outreach email grounded in the match/"
+        "gap analysis below.\n"
+        "Return ONLY a single JSON object that validates against this "
+        "JSON Schema — no markdown fences, no commentary, no extra keys.\n\n"
+        f"JSON Schema:\n{schema_json}\n\n"
+        "Rules:\n"
+        "- Select at most 2-3 of the strongest points from match_data — "
+        "use your own judgment; do not enumerate every match. An email that "
+        "recites every matched skill reads as a resume dump, not outreach.\n"
+        "- Never claim anything listed in match_data.unmatched_jd_requirements.\n"
+        "- Use overall_match_summary as the framing/angle for the email, not "
+        "as a field to quote verbatim.\n"
+        "- Address the contact by contact_name / contact_title when provided. "
+        "If contact_name is null, use a generic professional greeting "
+        '(e.g. "Hi there," or addressing the team) — never fabricate a name.\n'
+        "- Reference company_name and role_title naturally for specificity.\n"
+        "- Keep tone professional and concise, with a clear call-to-action.\n\n"
+        f"Contact name: {contact_name_repr}\n"
+        f"Contact title: {contact_title_repr}\n"
+        f"Company name: {json.dumps(company_name)}\n"
+        f"Role title: {json.dumps(role_title)}\n\n"
+        "Match data (JSON):\n"
+        "---\n"
+        f"{match_json}\n"
+        "---\n"
+    )
+
+
+def eval_prompt(
+    email: EmailDraft,
+    match_data: MatchData,
+    contact_name: str | None,
+    contact_title: str | None,
+    company_name: str,
+    role_title: str,
+) -> str:
+    """Build the user prompt for LLM-as-judge → ``EvalResult``."""
+    schema_json = json.dumps(EvalResult.model_json_schema(), indent=2)
+    email_json = email.model_dump_json(indent=2)
+    match_json = match_data.model_dump_json(indent=2)
+    contact_name_repr = (
+        json.dumps(contact_name) if contact_name is not None else "null"
+    )
+    contact_title_repr = (
+        json.dumps(contact_title) if contact_title is not None else "null"
+    )
+    return (
+        "You are an independent judge evaluating a cold outreach email "
+        "against a locked quality rubric.\n"
+        "Return ONLY a single JSON object that validates against this "
+        "JSON Schema — no markdown fences, no commentary, no extra keys.\n\n"
+        f"JSON Schema:\n{schema_json}\n\n"
+        "Tier 1 — Hard gates (binary):\n"
+        "- no_unsupported_claims: every factual *candidate-fit* claim in "
+        "the email must trace to something in match_data. Claims about "
+        "items in unmatched_jd_requirements fail this gate. "
+        "company_name and role_title are NOT part of this gate — "
+        "referencing the company name or role title is not itself a "
+        "claim requiring match_data support; do not false-flag "
+        "legitimate company/role references.\n"
+        "- correct_contact_name_used: the email must address the contact "
+        "correctly using contact_name / contact_title when provided. If "
+        "contact_name is null, a generic professional greeting (e.g. "
+        '"Hi there," or addressing the team) PASSES — fabricating a name '
+        "fails.\n"
+        "If either gate is false, populate violation_detail with free-form "
+        "text naming the specific problem (which claim is unsupported, or "
+        "how the contact name/title was wrong). If both gates pass, set "
+        "violation_detail to null.\n\n"
+        "Tier 2 — Graded dimensions (integers 1–5 each):\n"
+        "- role_company_specificity: company_name and role_title below "
+        "are trusted ground truth (passed through from already-verified "
+        "DB rows, not LLM-generated). Grade whether the email correctly "
+        "and specifically references *this* company and role — not "
+        "merely whether it sounds specific in the abstract.\n"
+        "- relevance_alignment (to the match data / role)\n"
+        "- tone_professionalism\n"
+        "- conciseness\n"
+        "- clear_cta\n\n"
+        f"Contact name: {contact_name_repr}\n"
+        f"Contact title: {contact_title_repr}\n"
+        f"Company name: {json.dumps(company_name)}\n"
+        f"Role title: {json.dumps(role_title)}\n\n"
+        "Email draft (JSON):\n"
+        "---\n"
+        f"{email_json}\n"
+        "---\n\n"
+        "Match data ground-truth reference (JSON):\n"
+        "---\n"
+        f"{match_json}\n"
+        "---\n"
+    )
+
+
+def refine_prompt(email: EmailDraft, feedback: str) -> str:
+    """Build the user prompt for feedback-driven revision → ``EmailDraft``."""
+    schema_json = json.dumps(EmailDraft.model_json_schema(), indent=2)
+    email_json = email.model_dump_json(indent=2)
+    return (
+        "Revise the outreach email below to address the specific feedback. "
+        "Preserve what already works; return a complete new draft (not a "
+        "diff).\n"
+        "Return ONLY a single JSON object that validates against this "
+        "JSON Schema — no markdown fences, no commentary, no extra keys.\n\n"
+        f"JSON Schema:\n{schema_json}\n\n"
+        "Feedback to address:\n"
+        "---\n"
+        f"{feedback}\n"
+        "---\n\n"
+        "Original email draft (JSON):\n"
+        "---\n"
+        f"{email_json}\n"
         "---\n"
     )

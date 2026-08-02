@@ -1,7 +1,7 @@
 """Match/gap analysis: ``ResumeExtraction`` × ``JDExtraction`` → ``MatchData``.
 
-Internal service only — no router, no DB access. Callers (eventually
-``email_generation.py``) are responsible for ensuring extractions exist before
+Internal service only — no router, no DB access. Callers (the future
+generation endpoint) are responsible for ensuring extractions exist before
 invoking this. Calls ``LLMClient.complete`` only; never the Anthropic SDK
 directly (ARCHITECTURE.md §3).
 """
