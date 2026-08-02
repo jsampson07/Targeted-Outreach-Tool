@@ -1,6 +1,6 @@
 # Progress Snapshot
 
-*Overwritten each session, not appended to. Reflects verified state as of the session ending 2026-08-01 — email generation + eval services slice (`email_generation.py` / `eval.py` + `EmailDraft` / eval schemas + generation/eval/refine prompts), including the pre-commit correction threading `company_name`/`role_title` through the eval path. Full suite: `pytest` → **106 passed** against real Postgres (transaction-rollback `conftest.py`; Anthropic SDK fully mocked — no live LLM credits). Actual terminal line: `106 passed, 59 warnings in 9.81s`.*
+*Overwritten each session, not appended to. Reflects verified state as of the session ending 2026-08-01 — GENERATED_EMAILS persistence + `POST /generated-emails` endpoint (`generated_emails.py` orchestrator + `GenerateEmailRequest` / `GeneratedEmailOut` schemas). Full generate→evaluate→persist loop is HTTP-callable end to end for the first time. Full suite: `pytest` → **117 passed** against real Postgres (transaction-rollback `conftest.py`; Anthropic SDK / LLM services fully mocked — no live LLM credits). Actual terminal line: `117 passed, 63 warnings in 19.76s`.*
 
 ---
 
@@ -8,6 +8,12 @@
 
 ### Verified working (functionally exercised, not just present)
 
+- **GENERATED_EMAILS persistence + generation endpoint (this session):**
+  - **Model verified:** `app/models/generated_email.py` columns match `GeneratedEmailOut` exactly (`contact_id`, `resume_id`, `job_description_id`, `subject`, `body`, `eval_score`, `eval_breakdown` JSONB, `match_data` JSONB, `gate_passed`, `created_at`) — no migration needed.
+  - **`app/schemas/generated_email.py`** — added `GenerateEmailRequest` + `GeneratedEmailOut` (existing `EmailDraft` / `MatchData` / `Eval*` unchanged).
+  - **`app/services/generated_emails.py`** — `generate_and_persist_email(db, current_user, contact_id, resume_id, job_description_id)`: ownership-filtered resume/JD load → existence-only contact load → require extractions → company FK load + company/contact consistency check → `generate_match_data` → `generate_email` → `evaluate_with_retry` → compute `eval_score` (plain mean of five dimensions) + `gate_passed` → always INSERT new row → commit/refresh/return. Cheap checks before any LLM call.
+  - **Router** — `POST /generated-emails` (auth required), `response_model=GeneratedEmailOut`, thin wrapper wired in `main.py`.
+  - **Verified:** `pytest tests/services/test_generated_emails.py` — **8 passed** (happy path + eval_score average math; wrong-owner resume/JD → NotFoundError; missing contact → NotFoundError; missing extractions → ValidationError; company mismatch → ValidationError; same triple → two distinct rows). `tests/routers/test_generated_emails.py` — **3 passed** (401 without token; 200 + `GeneratedEmailOut` shape; 404 on bad ids). Service tests use real Postgres; LLM sub-calls monkeypatched. Router tests mock the service layer.
 - **Postgres via Docker Compose** — `docker-compose.yml` at repo root, `postgres:18`, volume mounted at `/var/lib/postgresql` (not `.../data` — the 18+ layout requirement). Container runs cleanly.
 - **`backend/alembic/versions/bd31568efd53_initial_schema.py`** — applied successfully (`alembic upgrade head` ran with no errors against the real DB). Independently reviewed against `DATA_MODEL.md` §3.4–§3.8. **9 tables**.
 - **`backend/alembic/versions/97807b9a3c89_add_user_id_to_job_descriptions.py`** — additive migration adding `JOB_DESCRIPTIONS.user_id`. Confirmed applied.
@@ -24,23 +30,22 @@
 - **MockProvider-backed contact discovery pipeline** — **Verified:** `pytest tests/services/test_contact_discovery.py` — **8 passed**.
 - **HunterProvider** — **Verified:** `pytest tests/providers/test_hunter_provider.py` — **12 passed** (HTTP mocked).
 - **Company name resolution (Clearbit)** — **Verified:** `pytest tests/services/test_company_resolution.py tests/routers/test_company_resolution.py` — **7 passed** (5 service + 2 router).
-- **LLM layer — shared client + structured extraction (prior session):**
+- **LLM layer — shared client + structured extraction:**
   - **`app/llm/client.py`** — `LLMClient` wrapping `AsyncAnthropic`. `async complete(prompt, response_schema) -> BaseModel`.
-  - **`app/llm/prompts.py`** — resume/JD extraction prompts + matching + (this session) email/eval/refine prompts.
+  - **`app/llm/prompts.py`** — resume/JD extraction + matching + email/eval/refine prompts.
   - **`app/services/extraction.py`** — `extract_resume` / `extract_job_description` with optional `llm_client=`.
   - **Routers** — `POST /resumes/{resume_id}/extract` → `ResumeOut`; `POST /job-descriptions/{jd_id}/extract` → `JobDescriptionOut`.
   - **Verified:** `pytest tests/llm/test_client.py` — **5 passed**; `tests/services/test_extraction.py` — **8 passed**; `tests/routers/test_extraction.py` — **6 passed**.
-- **LLM layer — match/gap analysis (prior session):**
-  - **`app/schemas/generated_email.py`** — `SkillMatch`, `ExperienceAlignment`, `MatchData` (plus this session's email/eval schemas below).
+- **LLM layer — match/gap analysis:**
+  - **`app/schemas/generated_email.py`** — `SkillMatch`, `ExperienceAlignment`, `MatchData` (plus email/eval/`GeneratedEmailOut` schemas).
   - **`app/llm/prompts.py`** — `matching_prompt(resume_extraction, jd_extraction)`.
   - **`app/services/matching.py`** — `async generate_match_data(...) -> MatchData`. No DB session, no router.
   - **Verified:** `pytest tests/services/test_matching.py` — **3 passed**.
-- **LLM layer — email generation + eval (this session):**
-  - **`app/schemas/generated_email.py`** — added `EmailDraft` (ephemeral subject/body), full eval stack (`EvalGates` with new `violation_detail`, `EvalDimensions`, `EvalBreakdown`, `EvalResult`). Deliberately omits `GeneratedEmailOut` — that belongs to the persistence/router task.
-  - **`app/llm/prompts.py`** — `email_generation_prompt`, `eval_prompt`, `refine_prompt`. Embed structured inputs via `model_dump_json(indent=2)` and target schemas via `model_json_schema()`. Generation prompt: select ≤2–3 strongest points, never claim `unmatched_jd_requirements`, use `overall_match_summary` as framing, explicit `contact_name=None` → generic greeting (never fabricate). Eval prompt: Tier 1 gates + Tier 2 1–5 dimensions; takes `company_name`/`role_title` as trusted ground truth for `role_company_specificity` (explicitly excluded from `no_unsupported_claims`); `violation_detail` required when any gate fails.
-  - **`app/services/email_generation.py`** — `async generate_email(contact_name, contact_title, company_name, role_title, match_data, *, llm_client=None) -> EmailDraft`. Same shape as `matching.py`: injectable client, no DB, `LLMExtractionError` propagates.
-  - **`app/services/eval.py`** — `evaluate_email(..., company_name, role_title) → EvalResult`; `refine(email, feedback) -> EmailDraft` (unchanged minimal signature); `evaluate_with_retry` owns the silent single-retry gate loop (evaluate → on failure refine once with `violation_detail` → re-evaluate → return second pass either way). Constructs at most one `LLMClient` and reuses it across calls.
-  - **Verified:** `pytest tests/services/test_email_generation.py` — **4 passed**; `tests/services/test_eval.py` — **6 passed** (happy paths + schema args; prompt includes company/role + ground-truth / gate-scope instructions; `contact_name=None` fallback instructions; `LLMExtractionError` propagation; gate-pass skips refine; gate-fail calls judge → refine(feedback=`violation_detail`) → judge again). No DB fixture.
+- **LLM layer — email generation + eval (prior session):**
+  - **`app/schemas/generated_email.py`** — `EmailDraft`, full eval stack (`EvalGates` with `violation_detail`, `EvalDimensions`, `EvalBreakdown`, `EvalResult`).
+  - **`app/services/email_generation.py`** — `async generate_email(...) -> EmailDraft`. No DB.
+  - **`app/services/eval.py`** — `evaluate_email` / `refine` / `evaluate_with_retry` (silent single-retry gate loop).
+  - **Verified:** `pytest tests/services/test_email_generation.py` — **4 passed**; `tests/services/test_eval.py` — **6 passed**.
 - **Integration test harness** — `backend/tests/conftest.py` + real Postgres nested transactions.
 - **`backend/requirements.txt`** — includes `anthropic==0.120.2`. No `pytest-asyncio` / `respx`.
 
@@ -50,9 +55,8 @@
 
 ### Not started
 
-- **`GENERATED_EMAILS` persistence + generation router endpoint** — immediate next task: endpoint taking `{contact_id, resume_id, job_description_id}`, load/ownership-check those rows, call `generate_match_data` → `generate_email` → `evaluate_with_retry`, persist a `GENERATED_EMAILS` row, return `GeneratedEmailOut`. Services exist; the loop is not yet HTTP-callable or persisted.
 - **Remaining real contact providers** — `ApolloProvider` / `AnymailProvider` deferred.
-- **Frontend** — scaffolded only (Vite + React + TS).
+- **Frontend** — scaffolded only (Vite + React + TS). Immediate next focus.
 - **Refresh-token rotation / reuse-detection**, **cookie-based refresh transport**, **login rate-limiting** — deferred in `OPEN_QUESTIONS.md`.
 
 ---
@@ -93,32 +97,35 @@
     - **`LLMClient.complete` is `async`** and uses `AsyncAnthropic`.
     - **`max_tokens=4096`** hardcoded on the client.
     - **`get_job_description_by_id(db, user, jd_id)`** ownership-filters on `user_id`.
-27. **`extraction.py`'s `_user_for_id` helper introduces an avoidable extra DB query per extraction call — accepted as minor debt, not fixed.** Prior note suggested revisiting when `matching.py` was built; that trigger did not apply — `matching.py` takes already-extracted Pydantic objects and never touches the DB / ownership helpers. Fix remains: accept `current_user: User` directly in both `extraction.py` functions, drop `_user_for_id`, update both router call sites. Revisit opportunistically next time `extraction.py` is touched for another reason.
+27. **`extraction.py`'s `_user_for_id` helper introduces an avoidable extra DB query per extraction call — accepted as minor debt, not fixed.** Prior note suggested revisiting when `matching.py` was built; that trigger did not apply — `matching.py` takes already-extracted Pydantic objects and never touches the DB / ownership helpers. `generated_emails.py` also takes `current_user: User` directly (does not repeat the `_user_for_id` pattern). Fix remains: accept `current_user: User` directly in both `extraction.py` functions, drop `_user_for_id`, update both router call sites. Revisit opportunistically next time `extraction.py` is touched for another reason.
 28. **Match/gap analysis implementation choices locked previously:**
-    - **`MatchData` / `SkillMatch` / `ExperienceAlignment` live in `app/schemas/generated_email.py`**, even though `GeneratedEmailOut` itself is not built yet — file name matches the eventual persistence home (`GENERATED_EMAILS.match_data`) rather than inventing a `match.py` schema module.
-    - **`matching_prompt` serializes both extractions via `model_dump_json(indent=2)`** inside fenced JSON blocks, and embeds `MatchData.model_json_schema()` the same way extraction prompts do — keeps the structured-output contract consistent across LLM call sites.
-    - **No dedicated match/gap HTTP endpoint** — deliberate; see `OPEN_QUESTIONS.md` Resolved. Product surfacing happens later via `match_data` on the generated-email response.
-    - **`generate_match_data` does not check `extracted_data is not None`** — that check belongs to the future caller that loads DB rows (now the generation router task, not `email_generation.py` itself — see #31).
-29. **`EvalGates.violation_detail` added after the original schema lock.** Free-form `str | None` (not a fixed violation-type enum), populated only when a Tier 1 gate fails, solely to feed `refine()`'s feedback argument. Never shown to the user; not persisted independently. Documented in `DATA_MODEL.md` §2.7 and `OPEN_QUESTIONS.md` Resolved.
-30. **`EmailDraft` is a new non-persisted schema** (`subject` + `body`) for generation/refine LLM I/O. Separate from `GeneratedEmailOut` (still deferred) so ephemeral draft shapes aren't conflated with the persisted API response.
-31. **`generate_email` / `evaluate_email` take explicit primitives** (`contact_name`, `contact_title`, `company_name`, `role_title` as needed) plus `MatchData` / `EmailDraft` — not ORM/DB objects, no DB session, no re-pass of raw resume/JD extractions (`match_data` is already the condensed signal). Ownership/loading deferred to the next (router) task.
-32. **`evaluate_with_retry` owns gate-retry orchestration inside `eval.py`**, not a separate module and not the future router. `refine` stays the standalone reusable primitive for the product doc's v1.1+ multi-turn path. On gate failure with a missing `violation_detail`, a short fallback feedback string is used so `refine` always receives `str` (defensive; the judge prompt requires `violation_detail` when a gate fails).
+    - **`MatchData` / `SkillMatch` / `ExperienceAlignment` live in `app/schemas/generated_email.py`** — file name matches the persistence home (`GENERATED_EMAILS.match_data`).
+    - **`matching_prompt` serializes both extractions via `model_dump_json(indent=2)`** inside fenced JSON blocks, and embeds `MatchData.model_json_schema()` the same way extraction prompts do.
+    - **No dedicated match/gap HTTP endpoint** — deliberate; see `OPEN_QUESTIONS.md` Resolved. Product surfacing is via `match_data` on `GeneratedEmailOut`.
+    - **`generate_match_data` does not check `extracted_data is not None`** — that check lives in `generated_emails.py` (the DB-loading caller).
+29. **`EvalGates.violation_detail` added after the original schema lock.** Free-form `str | None` (not a fixed violation-type enum), populated only when a Tier 1 gate fails, solely to feed `refine()`'s feedback argument. Never shown to the user; not persisted independently (rides inside `eval_breakdown` JSONB). Documented in `DATA_MODEL.md` §2.7 and `OPEN_QUESTIONS.md` Resolved.
+30. **`EmailDraft` is a non-persisted schema** (`subject` + `body`) for generation/refine LLM I/O. Separate from `GeneratedEmailOut` so ephemeral draft shapes aren't conflated with the persisted API response.
+31. **`generate_email` / `evaluate_email` take explicit primitives** (`contact_name`, `contact_title`, `company_name`, `role_title` as needed) plus `MatchData` / `EmailDraft` — not ORM/DB objects, no DB session. Ownership/loading lives in `generated_emails.py`.
+32. **`evaluate_with_retry` owns gate-retry orchestration inside `eval.py`**, not a separate module and not the router. `refine` stays the standalone reusable primitive for the product doc's v1.1+ multi-turn path. On gate failure with a missing `violation_detail`, a short fallback feedback string is used so `refine` always receives `str`.
 33. **`contact_name=None` fallback handling is explicit in both prompts:** generation instructs a generic professional greeting and forbids fabricating a name; eval treats that generic greeting as a pass for `correct_contact_name_used` when `contact_name` is null.
-34. **`eval_prompt` / `evaluate_email` / `evaluate_with_retry` gained `company_name` + `role_title` before commit.** Gap in the original task spec (generation already had them; eval didn't) — caught in review, not a Cursor deviation. Needed so `role_company_specificity` grades accuracy against trusted DB ground truth, not just specific-sounding language. Prompt explicitly scopes `no_unsupported_claims` to candidate-fit / `match_data` claims so company/role references aren't false-flagged. `refine()` deliberately left unchanged (`email` + `feedback` only); the second `evaluate_with_retry` pass re-checks against full context including this ground truth.
+34. **`eval_prompt` / `evaluate_email` / `evaluate_with_retry` gained `company_name` + `role_title` before commit.** Gap in the original task spec (generation already had them; eval didn't) — caught in review, not a Cursor deviation. Needed so `role_company_specificity` grades accuracy against trusted DB ground truth. `refine()` deliberately left unchanged (`email` + `feedback` only).
+35. **`app/services/generated_emails.py` is a separate orchestrating service from `email_generation.py`.** `email_generation.py` stays a pure LLM call site (primitives in → `EmailDraft` out, no DB) per ARCHITECTURE.md §3's four-LLM-services table. Persistence, ownership checks, company consistency, score aggregation, and insert live in `generated_emails.py` — same "thick service, thin router" pattern as `contact_discovery.py`. Not a fifth LLM call site; §3's table is unchanged.
+36. **Always-insert-never-overwrite on `GENERATED_EMAILS`.** Deliberate divergence from `extraction.py`'s overwrite-in-place: each regeneration produces a new row so future `OUTCOMES` FKs remain valid. Same `(contact_id, resume_id, job_description_id)` → multiple rows is expected.
+37. **`eval_score` is the plain unweighted average of the five `EvalDimensions` ints**, always computed regardless of `gate_passed`. No zeroing/omitting on gate failure; gates are a separate boolean column.
+38. **Company/contact consistency check** — server rejects with `ValidationError` when `contact.company_id != job_description.company_id`. Defense-in-depth; frontend filtering is a Phase 3 forward note (see `OPEN_QUESTIONS.md`).
 
 ---
 
 ## What's next
 
-1. **`GENERATED_EMAILS` persistence + generation router endpoint** — authenticated endpoint taking `{contact_id, resume_id, job_description_id}`: load and ownership-check those rows (ensure extractions exist), call `generate_match_data` → `generate_email` → `evaluate_with_retry`, persist a `GENERATED_EMAILS` row (`subject`/`body`/`match_data`/`eval_breakdown`/`eval_score`/`gate_passed`), return `GeneratedEmailOut`. This is what makes the LLM loop demoable end to end.
-2. **Frontend** — thin end-to-end flow: company resolution → discovery → resume/JD upload → extract → generated email.
-3. **Stretch, only if time remains:** Apollo/Anymail, outcome-logging polish, basic analytics view.
+1. **Frontend** — thin end-to-end flow: company resolution → discovery → resume/JD upload → extract → generated email. Highest remaining risk; only piece left before the app itself is demoable.
+2. **Stretch, only if time remains:** Apollo/Anymail, outcome-logging polish, basic analytics view.
 
 ---
 
 ## Doc notes from this session
 
-- **`DATA_MODEL.md` §2.7:** added `EmailDraft`; added `violation_detail` to `EvalGates` with Decision/Reasoning (deliberate revision; free-form vs enum; refine-feedback-only).
-- **`ARCHITECTURE.md` §3:** removed `*(future)*` from `email_generation.py` / `eval.py`; noted `evaluate_with_retry` owns single-retry orchestration and `refine` remains the reusable primitive.
-- **`OPEN_QUESTIONS.md`:** four new Resolved entries — `violation_detail`, retry orchestration location, service input shape, `contact_name=None` fallback.
-- **`product_discovery_summary.md`:** Phase 3 updated — LLM services functionally complete; persistence + router remain before the loop is demoable. Not overstated as done.
+- **`DATA_MODEL.md` §2.7:** added `GenerateEmailRequest` — real gap filled (doc previously only had `GeneratedEmailOut` + "no GeneratedEmailCreate"); updated persistence wording for `EmailDraft` / `violation_detail` now that the row is written.
+- **`ARCHITECTURE.md` §2:** cited `generated_emails.py` alongside `contact_discovery.py` as a thick-service example. No §3 change (not a fifth LLM call site).
+- **`OPEN_QUESTIONS.md`:** three new Resolved entries (company/contact consistency, `eval_score` formula, always-insert); one new "Not yet discussed" (frontend company/contact filtering); past-tense updates on matching/eval Resolved entries that previously said "future generation endpoint."
+- **`product_discovery_summary.md`:** Phase 3 updated — LLM loop is fully demoable via the API; frontend is the only remaining piece before the app itself is demoable.

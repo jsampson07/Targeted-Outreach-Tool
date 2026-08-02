@@ -234,6 +234,11 @@ class MatchData(BaseModel):
     notable_resume_strengths: list[str]
     overall_match_summary: str
 
+class GenerateEmailRequest(BaseModel):
+    contact_id: int
+    resume_id: int
+    job_description_id: int
+
 class GeneratedEmailOut(BaseModel):
     id: int
     contact_id: int
@@ -249,11 +254,13 @@ class GeneratedEmailOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 ```
 
-**Decision:** No `GeneratedEmailCreate` — like `COMPANIES`, this entity is the *output* of a flow (`{contact_id, resume_id, job_description_id}` in → `email_generation.py` + `eval.py` running → a row out), not something a user POSTs directly.
+**Decision:** No `GeneratedEmailCreate` — like `COMPANIES`, this entity is the *output* of a flow (IDs in → match/generate/eval → a row out), not something a user POSTs as a ready-made email. The request body for that flow is `GenerateEmailRequest` below — not a create schema.
 
-**Decision (revision):** `EvalGates.violation_detail: str | None = None` was added after the original schema lock. It is free-form text (not a fixed violation-type enum) populated by the LLM judge only when at least one Tier 1 gate is `False`, naming the specific problem (e.g. which claim isn't traceable to `match_data`, or how the contact name/title was wrong). It exists solely to feed `refine(email, feedback)` — it is never shown to the user and is not persisted as its own column (only the final `EvalResult` / `eval_breakdown` will be, once `GENERATED_EMAILS` persistence lands). A fixed enum was considered and rejected: gate failures are too situation-specific for a closed category list to stay useful as refine feedback without constantly expanding the enum.
+**Decision (gap filled):** `GenerateEmailRequest` was never defined in this document previously — §2.7 only specified `GeneratedEmailOut` and noted "no `GeneratedEmailCreate`" without naming the actual request body. That was a real documentation gap, not a rename: the endpoint takes `{contact_id, resume_id, job_description_id}` and the server owns generation, scoring, and persistence. Added here to match `app/schemas/generated_email.py` / `POST /generated-emails`.
 
-**Decision:** `EmailDraft` is the ephemeral LLM structured-output shape for generation and refine (`subject` + `body` only). It is not a persisted entity and has no backing table — `GENERATED_EMAILS` stores subject/body as columns on the row once the persistence/router task writes them. Keeping draft I/O separate from `GeneratedEmailOut` avoids conflating "what the model just produced" with "what was saved and returned to the client."
+**Decision (revision):** `EvalGates.violation_detail: str | None = None` was added after the original schema lock. It is free-form text (not a fixed violation-type enum) populated by the LLM judge only when at least one Tier 1 gate is `False`, naming the specific problem (e.g. which claim isn't traceable to `match_data`, or how the contact name/title was wrong). It exists solely to feed `refine(email, feedback)` — it is never shown to the user and is not persisted as its own column (it rides along inside the persisted `eval_breakdown` JSONB on `GENERATED_EMAILS`). A fixed enum was considered and rejected: gate failures are too situation-specific for a closed category list to stay useful as refine feedback without constantly expanding the enum.
+
+**Decision:** `EmailDraft` is the ephemeral LLM structured-output shape for generation and refine (`subject` + `body` only). It is not a persisted entity and has no backing table — `GENERATED_EMAILS` stores subject/body as columns on the row written by `app/services/generated_emails.py`. Keeping draft I/O separate from `GeneratedEmailOut` avoids conflating "what the model just produced" with "what was saved and returned to the client."
 
 **Decision:** Match/gap analysis is persisted as a `match_data` JSONB field on `GENERATED_EMAILS`, rather than left ephemeral (computed at generation time and discarded). This matches the same "persist for audit fidelity" tradeoff already accepted for `RAW_PROVIDER_RESULTS` in the product doc, and enables future analytics (e.g. reply rate vs. skill-match completeness) without needing a schema change later.
 
