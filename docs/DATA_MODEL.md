@@ -195,6 +195,7 @@ tier being exhausted with zero candidates found.
 class EvalGates(BaseModel):
     no_unsupported_claims: bool
     correct_contact_name_used: bool
+    violation_detail: str | None = None
 
 class EvalDimensions(BaseModel):
     role_company_specificity: int   # 1-5
@@ -211,6 +212,10 @@ class EvalResult(EvalBreakdown):
     """Raw shape returned by the LLM-judge call — before it's decided
     whether to trigger refine() and before it's persisted."""
     pass
+
+class EmailDraft(BaseModel):
+    subject: str
+    body: str
 
 class SkillMatch(BaseModel):
     jd_requirement: str
@@ -245,6 +250,10 @@ class GeneratedEmailOut(BaseModel):
 ```
 
 **Decision:** No `GeneratedEmailCreate` — like `COMPANIES`, this entity is the *output* of a flow (`{contact_id, resume_id, job_description_id}` in → `email_generation.py` + `eval.py` running → a row out), not something a user POSTs directly.
+
+**Decision (revision):** `EvalGates.violation_detail: str | None = None` was added after the original schema lock. It is free-form text (not a fixed violation-type enum) populated by the LLM judge only when at least one Tier 1 gate is `False`, naming the specific problem (e.g. which claim isn't traceable to `match_data`, or how the contact name/title was wrong). It exists solely to feed `refine(email, feedback)` — it is never shown to the user and is not persisted as its own column (only the final `EvalResult` / `eval_breakdown` will be, once `GENERATED_EMAILS` persistence lands). A fixed enum was considered and rejected: gate failures are too situation-specific for a closed category list to stay useful as refine feedback without constantly expanding the enum.
+
+**Decision:** `EmailDraft` is the ephemeral LLM structured-output shape for generation and refine (`subject` + `body` only). It is not a persisted entity and has no backing table — `GENERATED_EMAILS` stores subject/body as columns on the row once the persistence/router task writes them. Keeping draft I/O separate from `GeneratedEmailOut` avoids conflating "what the model just produced" with "what was saved and returned to the client."
 
 **Decision:** Match/gap analysis is persisted as a `match_data` JSONB field on `GENERATED_EMAILS`, rather than left ephemeral (computed at generation time and discarded). This matches the same "persist for audit fidelity" tradeoff already accepted for `RAW_PROVIDER_RESULTS` in the product doc, and enables future analytics (e.g. reply rate vs. skill-match completeness) without needing a schema change later.
 

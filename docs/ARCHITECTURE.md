@@ -58,10 +58,12 @@ backend/
 |---|---|
 | `extraction.py` | Single-document structured extraction (resume → `ResumeExtraction`, JD → `JDExtraction`) |
 | `matching.py` | Match/gap analysis comparing a `ResumeExtraction` to a `JDExtraction` → `MatchData` |
-| `email_generation.py` *(future)* | Grounded outreach draft from contact + match data |
-| `eval.py` *(future)* | Rubric-based judging of a generated email |
+| `email_generation.py` | Grounded outreach draft from contact context + `MatchData` → `EmailDraft` |
+| `eval.py` | Rubric-based judging of a generated email (`evaluate_email` / `refine` / `evaluate_with_retry`) |
 
 `matching.py` is its own file because match/gap analysis is a **comparison between two already-extracted documents**, not a single-document extraction (so it does not belong in `extraction.py`) and not something `eval.py` should be responsible for producing (`eval.py` *consumes* `MatchData` as a verification reference — see `DATA_MODEL.md` §2.7).
+
+`eval.py`'s `evaluate_with_retry` owns the silent single-retry hard-gate orchestration from `product_discovery_summary.md` (evaluate → on gate failure, `refine` once with `violation_detail` → evaluate again → return the second pass either way). `refine(email, feedback) -> EmailDraft` remains the standalone reusable primitive so the deferred v1.1+ interactive multi-turn refinement path is more calls / more triggers / a UI, not a rebuild.
 
 **Reasoning:** All four call sites share the same underlying shape: prompt in, Pydantic-validated JSON out. This shared shape is already known from the product doc (structured extraction, match analysis, grounded generation, rubric-based judging all follow the same pattern) — it isn't a guess about future needs, which is what would normally argue for waiting. A shared wrapper gives one place to swap models, add retry/timeout/backoff logic, and log token usage/cost across all call sites, and lets tests substitute a fake client (mirroring the `mock.py` provider pattern) instead of monkeypatching HTTP calls in multiple files.
 
