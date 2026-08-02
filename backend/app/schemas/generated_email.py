@@ -1,19 +1,20 @@
-"""Schemas for match/gap analysis, email drafts, and eval I/O.
+"""Schemas for match/gap analysis, email drafts, eval I/O, and generated-email API.
 
 ``MatchData`` / ``SkillMatch`` / ``ExperienceAlignment`` are LLM structured-
-output shapes with no backing table of their own — they persist later as the
+output shapes with no backing table of their own — they persist as the
 ``match_data`` JSONB field on ``GENERATED_EMAILS`` (DATA_MODEL.md §2.7).
 ``EmailDraft`` is the ephemeral generation/refine output shape (subject/body
 only) — not persisted on its own. ``EvalResult`` / ``EvalBreakdown`` are the
-LLM-judge shapes; persistence of ``eval_breakdown`` on ``GENERATED_EMAILS``
-(and ``GeneratedEmailOut``) is deferred to the persistence/router task.
+LLM-judge shapes; the final breakdown persists on ``GENERATED_EMAILS`` and is
+returned via ``GeneratedEmailOut``.
 """
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class SkillMatch(BaseModel):
@@ -64,3 +65,24 @@ class EvalResult(EvalBreakdown):
     """Raw shape returned by the LLM-judge call — before refine() / persist."""
 
     pass
+
+
+class GenerateEmailRequest(BaseModel):
+    contact_id: int
+    resume_id: int
+    job_description_id: int
+
+
+class GeneratedEmailOut(BaseModel):
+    id: int
+    contact_id: int
+    resume_id: int
+    job_description_id: int
+    subject: str
+    body: str
+    eval_score: float
+    eval_breakdown: EvalBreakdown
+    match_data: MatchData
+    gate_passed: bool
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)

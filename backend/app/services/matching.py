@@ -1,9 +1,9 @@
 """Match/gap analysis: ``ResumeExtraction`` × ``JDExtraction`` → ``MatchData``.
 
-Internal service only — no router, no DB access. Callers (the future
-generation endpoint) are responsible for ensuring extractions exist before
-invoking this. Calls ``LLMClient.complete`` only; never the Anthropic SDK
-directly (ARCHITECTURE.md §3).
+Internal service only — no router, no DB access. Callers
+(``generated_emails.py``) are responsible for ensuring extractions exist
+before invoking this. Calls ``LLMClient.complete`` only; never the
+Anthropic SDK directly (ARCHITECTURE.md §3).
 """
 
 from __future__ import annotations
