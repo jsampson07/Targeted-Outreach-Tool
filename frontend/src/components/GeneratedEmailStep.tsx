@@ -180,6 +180,10 @@ function EmailResult({ email }: { email: GeneratedEmailOut }) {
             <dt>Correct contact name used</dt>
             <dd>{gates.correct_contact_name_used ? 'Pass' : 'Fail'}</dd>
           </div>
+          <div>
+            <dt>No unprompted gap admission</dt>
+            <dd>{gates.no_unprompted_gap_admission ? 'Pass' : 'Fail'}</dd>
+          </div>
         </dl>
       </div>
 

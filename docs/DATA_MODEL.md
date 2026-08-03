@@ -203,12 +203,14 @@ class EvalGates(BaseModel):
     """Internal judge/refine shape — includes violation_detail for refine()."""
     no_unsupported_claims: bool
     correct_contact_name_used: bool
+    no_unprompted_gap_admission: bool = True
     violation_detail: str | None = None
 
 class EvalGatesOut(BaseModel):
     """Client-facing gates — omits violation_detail (internal refine feedback)."""
     no_unsupported_claims: bool
     correct_contact_name_used: bool
+    no_unprompted_gap_admission: bool = True
 
 class EvalDimensions(BaseModel):
     role_company_specificity: int   # 1-5
@@ -278,6 +280,8 @@ class GeneratedEmailOut(BaseModel):
 
 **Decision (revision):** `EvalGates.violation_detail: str | None = None` was added after the original schema lock. It is free-form text (not a fixed violation-type enum) populated by the LLM judge only when at least one Tier 1 gate is `False`, naming the specific problem (e.g. which claim isn't traceable to `match_data`, or how the contact name/title was wrong). It exists solely to feed `refine(email, feedback)` — it is not persisted as its own column (it rides along inside the persisted `eval_breakdown` JSONB on `GENERATED_EMAILS`). A fixed enum was considered and rejected: gate failures are too situation-specific for a closed category list to stay useful as refine feedback without constantly expanding the enum.
 
+**Decision (revision):** `EvalGates.no_unprompted_gap_admission: bool = True` (mirrored on `EvalGatesOut`) was added after the original two-gate schema lock, following a real dogfooding failure where a generated cold email factually admitted an experience gap — which passed `no_unsupported_claims` but is bad outreach strategy. Default `True` (not required) so pre-existing `eval_breakdown` JSONB rows from the 2-gate era still deserialize without error; those rows keep their originally computed `gate_passed` under the old definition and are **not** retroactively recomputed. `violation_detail` remains shared across all three gates — no per-gate detail field.
+
 **Decision (API boundary fix):** Earlier docs claimed `violation_detail` "is never shown to the user," but `GeneratedEmailOut.eval_breakdown` was typed as the full internal `EvalBreakdown` / `EvalGates` — so FastAPI would have serialized `violation_detail` on every `GeneratedEmailOut` response (including the pre-existing `POST /generated-emails`). Fixed by introducing response-only `EvalGatesOut` / `EvalBreakdownOut` (no `violation_detail`) and pointing `GeneratedEmailOut.eval_breakdown` at `EvalBreakdownOut`. The internal `EvalGates` / `EvalBreakdown` / `EvalResult` shapes retain the field for judge → refine. The JSONB column may still contain `violation_detail`; the Out schema strips it at serialization time.
 
 **Decision (GET-by-id ownership):** `GET /generated-emails/{generated_email_id}` scopes reads via a join — `GeneratedEmail` → `Resume` on `resume_id`, filter `GeneratedEmail.id` + `Resume.user_id == current_user.id`. There is no `user_id` column on `GENERATED_EMAILS` (confirmed on the ORM model). This is sufficient because `generate_and_persist_email` loads both `resume_id` and `job_description_id` through ownership-filtered helpers scoped to `current_user` at write time, so `resume.user_id == job_description.user_id` holds for every existing row by construction. Missing and wrong-owner rows both raise `NotFoundError` (non-distinguishing 404). A denormalized `user_id` column was considered and deferred — see `OPEN_QUESTIONS.md` "GENERATED_EMAILS.user_id denormalization".
@@ -289,7 +293,7 @@ class GeneratedEmailOut(BaseModel):
 **`MatchData`'s role — this is important and was explicitly clarified during design:**
 - `MatchData` is the *complete* comparison between resume and JD — every skill checked, every responsibility assessed, every gap named. Completeness here is what makes it useful for grounding and evaluation.
 - It is **not** a template or checklist the generated email is expected to work through. The email is not validated against `match_data` field-by-field, and it should not mention most of what's in it — an email that recited every matched skill would read as a resume dump, not outreach.
-- In the **generation prompt** (`email_generation.py`), `match_data` is passed in full as *guidance*: the model is instructed to select at most 2-3 of the strongest points and write around them naturally, not enumerate everything. `unmatched_jd_requirements` specifically exists as the disallow-list for generation — nothing in it should be claimed.
+- In the **generation prompt** (`email_generation.py`), `match_data` is passed in full as *guidance*: the model is instructed to select at most 2-3 of the strongest points and write around them naturally, not enumerate everything. `unmatched_jd_requirements` specifically exists as the disallow-list for generation — nothing in it should be mentioned, referenced, implied, or acknowledged (not merely "don't claim as strengths"); the email should read as entirely positive framing from the selected strengths.
 - In the **eval/judge prompt** (`eval.py`), `match_data` plays a different role: a ground-truth *reference to verify against*. The Tier 1 hard gate ("no unsupported claims") checks whether every claim actually made in the email traces back to something in `match_data` — it doesn't check for completeness, only for the absence of false claims. This is why the rubric structurally does not reward or require resume-dumping: conciseness and specificity are separate graded dimensions, and the hard gate only ever checks precision, never recall.
 - `overall_match_summary` is the one field meant for direct consumption in the generation prompt (the compressed framing/angle); the other fields are the selectable menu and the verification reference.
 

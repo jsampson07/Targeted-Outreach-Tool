@@ -711,6 +711,7 @@ describe('HomePage discovery flow', () => {
       gates: {
         no_unsupported_claims: true,
         correct_contact_name_used: true,
+        no_unprompted_gap_admission: true,
       },
       dimensions: {
         role_company_specificity: 4,
@@ -862,6 +863,7 @@ describe('HomePage discovery flow', () => {
             gates: {
               no_unsupported_claims: false,
               correct_contact_name_used: true,
+              no_unprompted_gap_admission: true,
             },
           },
         },
@@ -882,6 +884,57 @@ describe('HomePage discovery flow', () => {
       screen.queryByText('Extracted job description'),
     ).not.toBeInTheDocument()
     expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('renders the no-unprompted-gap-admission gate as Pass and Fail', () => {
+    sessionStorage.setItem(
+      DISCOVERY_FLOW_KEY,
+      JSON.stringify({
+        ...flowThroughJd,
+        generatedEmail: sampleGeneratedEmail,
+      }),
+    )
+
+    const { unmount } = renderHome()
+
+    expect(screen.getByText('No unprompted gap admission')).toBeInTheDocument()
+    const passRow = screen
+      .getByText('No unprompted gap admission')
+      .closest('div')
+    expect(passRow).not.toBeNull()
+    expect(within(passRow as HTMLElement).getByText('Pass')).toBeInTheDocument()
+    unmount()
+
+    sessionStorage.setItem(
+      DISCOVERY_FLOW_KEY,
+      JSON.stringify({
+        ...flowThroughJd,
+        generatedEmail: {
+          ...sampleGeneratedEmail,
+          gate_passed: false,
+          eval_breakdown: {
+            ...sampleGeneratedEmail.eval_breakdown,
+            gates: {
+              no_unsupported_claims: true,
+              correct_contact_name_used: true,
+              no_unprompted_gap_admission: false,
+            },
+          },
+        },
+      }),
+    )
+
+    renderHome()
+
+    expect(screen.getByText('No unprompted gap admission')).toBeInTheDocument()
+    const failRow = screen
+      .getByText('No unprompted gap admission')
+      .closest('div')
+    expect(failRow).not.toBeNull()
+    expect(within(failRow as HTMLElement).getByText('Fail')).toBeInTheDocument()
+    expect(
+      screen.getByText(/Flagged — did not clear hard gates/i),
+    ).toBeInTheDocument()
   })
 
   it('copy subject and body writes paste-ready text to the clipboard', async () => {

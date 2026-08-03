@@ -28,6 +28,7 @@ export type MatchData = {
 export type EvalGatesOut = {
   no_unsupported_claims: boolean
   correct_contact_name_used: boolean
+  no_unprompted_gap_admission: boolean
 }
 
 export type EvalDimensions = {
