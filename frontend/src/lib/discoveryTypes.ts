@@ -1,3 +1,5 @@
+import type { JobDescriptionOut, ResumeOut } from './documentTypes'
+
 /** Types mirroring backend CompanySearch* / ContactDiscovery* schemas. */
 
 export type CompanySearchCandidate = {
@@ -47,10 +49,15 @@ export type LockedCompany = {
 }
 
 /**
- * Single sessionStorage payload for the discovery flow.
+ * Single sessionStorage payload for the home-page flow (discovery + documents).
  * Key: "discoveryFlow" — see discoverySession.ts for persistence rules.
+ *
+ * ``resume`` / ``jobDescription`` hold post-extract Out objects so a refresh
+ * rehydrates FRAME 4/5 without re-calling paid ``/extract`` endpoints.
  */
 export type PersistedDiscoveryFlow = {
   company: LockedCompany | null
   discoveryResult: ContactDiscoveryResponse | null
+  resume: ResumeOut | null
+  jobDescription: JobDescriptionOut | null
 }

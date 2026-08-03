@@ -1,7 +1,10 @@
 import { useMutation } from '@tanstack/react-query'
 import { useState, type FormEvent } from 'react'
 
+import { JobDescriptionStep } from '../components/JobDescriptionStep'
+import { ResumeStep } from '../components/ResumeStep'
 import { useAuth } from '../context/AuthContext'
+import { useResumeForGeneration } from '../hooks/useResumeForGeneration'
 import { ApiError } from '../lib/apiClient'
 import { discoverContact, searchCompanies } from '../lib/discoveryApi'
 import {
@@ -9,6 +12,8 @@ import {
   readDiscoveryFlow,
   writeCompanyLock,
   writeDiscoveryResult,
+  writeJobDescriptionResult,
+  writeResumeResult,
 } from '../lib/discoverySession'
 import type {
   CompanySearchCandidate,
@@ -16,16 +21,29 @@ import type {
   ContactDiscoveryResponse,
   LockedCompany,
 } from '../lib/discoveryTypes'
+import type { JobDescriptionOut } from '../lib/documentTypes'
 
-type Frame = 1 | 2 | 3
+type Frame = 1 | 2 | 3 | 4 | 5
 
-function frameFromState(
-  company: LockedCompany | null,
-  discoveryResult: ContactDiscoveryResponse | null,
-): Frame {
+/**
+ * Map persisted + in-memory flow flags to the single visible frame.
+ * pastDiscovery / pastResume are explicit continues (not inferred from ids)
+ * so successful extract still shows a confirmation before advancing.
+ */
+function frameFromState(args: {
+  company: LockedCompany | null
+  discoveryResult: ContactDiscoveryResponse | null
+  resumeReady: boolean
+  pastDiscovery: boolean
+  pastResume: boolean
+}): Frame {
+  const { company, discoveryResult, resumeReady, pastDiscovery, pastResume } =
+    args
   if (!company) return 1
   if (!discoveryResult) return 2
-  return 3
+  if (!pastDiscovery) return 3
+  if (!resumeReady || !pastResume) return 4
+  return 5
 }
 
 function formatBreakdownValue(
@@ -46,8 +64,8 @@ const BREAKDOWN_LABELS: Record<keyof ConfidenceBreakdown, string> = {
 }
 
 /**
- * Persistent `/` home: company resolution → role title → discovery result.
- * Exactly one of three frames at a time; frame is flow state, not a route.
+ * Persistent `/` home: company → role → discovery → resume → JD.
+ * Exactly one frame at a time; frame is flow state, not a route.
  */
 export function HomePage() {
   const { logout } = useAuth()
@@ -58,6 +76,17 @@ export function HomePage() {
   const [company, setCompany] = useState<LockedCompany | null>(initial.company)
   const [discoveryResult, setDiscoveryResult] =
     useState<ContactDiscoveryResponse | null>(initial.discoveryResult)
+  const [jobDescription, setJobDescription] =
+    useState<JobDescriptionOut | null>(initial.jobDescription)
+
+  // Skip FRAME 3 on rehydrate when a resume/JD was already extracted this tab.
+  const [pastDiscovery, setPastDiscovery] = useState(
+    () => initial.resume != null || initial.jobDescription != null,
+  )
+  // Skip resume confirmation on rehydrate only when JD already exists.
+  const [pastResume, setPastResume] = useState(
+    () => initial.jobDescription != null,
+  )
 
   const [companyQuery, setCompanyQuery] = useState('')
   const [candidates, setCandidates] = useState<CompanySearchCandidate[] | null>(
@@ -70,7 +99,21 @@ export function HomePage() {
   const [searchError, setSearchError] = useState<string | null>(null)
   const [discoverError, setDiscoverError] = useState<string | null>(null)
 
-  const frame = frameFromState(company, discoveryResult)
+  const resumeForGeneration = useResumeForGeneration({
+    initialResume: initial.resume,
+    onReady: (extracted) => {
+      if (!company || !discoveryResult) return
+      writeResumeResult(company, discoveryResult, extracted)
+    },
+  })
+
+  const frame = frameFromState({
+    company,
+    discoveryResult,
+    resumeReady: resumeForGeneration.resume?.extracted_data != null,
+    pastDiscovery,
+    pastResume,
+  })
 
   const searchMutation = useMutation({
     mutationFn: (query: string) => searchCompanies(query),
@@ -112,6 +155,10 @@ export function HomePage() {
       setDiscoverError(null)
       if (!company || company.domain !== variables.domain) return
       setDiscoveryResult(data)
+      setPastDiscovery(false)
+      setPastResume(false)
+      setJobDescription(null)
+      resumeForGeneration.reset()
       writeDiscoveryResult(company, data)
     },
     onError: (err) => {
@@ -126,17 +173,24 @@ export function HomePage() {
   function lockCompany(next: LockedCompany) {
     setCompany(next)
     setDiscoveryResult(null)
+    setJobDescription(null)
+    setPastDiscovery(false)
+    setPastResume(false)
     setCandidates(null)
     setShowManualFallback(false)
     setSearchError(null)
     setDiscoverError(null)
     setRoleTitle('')
+    resumeForGeneration.reset()
     writeCompanyLock(next)
   }
 
   function startNewSearch() {
     setCompany(null)
     setDiscoveryResult(null)
+    setJobDescription(null)
+    setPastDiscovery(false)
+    setPastResume(false)
     setCompanyQuery('')
     setCandidates(null)
     setShowManualFallback(false)
@@ -147,6 +201,7 @@ export function HomePage() {
     setDiscoverError(null)
     searchMutation.reset()
     discoverMutation.reset()
+    resumeForGeneration.reset()
     clearDiscoveryFlow()
   }
 
@@ -176,6 +231,31 @@ export function HomePage() {
     setDiscoverError(null)
     discoverMutation.mutate({ domain: company.domain, role_title })
   }
+
+  function handleContinueFromDiscovery() {
+    // company_id for the JD step comes from the discovered contact — LockedCompany
+    // only has name/domain. Without a contact we cannot create a JD frontend-only.
+    if (!discoveryResult?.contact) return
+    setPastDiscovery(true)
+  }
+
+  function handleContinueFromResume() {
+    if (!resumeForGeneration.resume?.extracted_data) return
+    setPastResume(true)
+  }
+
+  function handleJobDescriptionReady(jd: JobDescriptionOut) {
+    if (!company || !discoveryResult || !resumeForGeneration.resume) return
+    setJobDescription(jd)
+    writeJobDescriptionResult(
+      company,
+      discoveryResult,
+      resumeForGeneration.resume,
+      jd,
+    )
+  }
+
+  const companyIdForJd = discoveryResult?.contact?.company_id ?? null
 
   return (
     <main className="home-page discovery-page">
@@ -378,6 +458,10 @@ export function HomePage() {
                   ))}
                 </dl>
               </details>
+
+              <button type="button" onClick={handleContinueFromDiscovery}>
+                Continue to resume
+              </button>
             </div>
           ) : (
             <div className="discovery-not-found">
@@ -385,9 +469,30 @@ export function HomePage() {
                 No contact could be found for this company right now. All
                 search tiers were tried without a usable result.
               </p>
+              <p className="discovery-muted">
+                A contact is required before resume and job-description steps
+                (job descriptions need the resolved company id from the
+                contact). Start a new search to try another company.
+              </p>
             </div>
           )}
         </section>
+      ) : null}
+
+      {frame === 4 ? (
+        <ResumeStep
+          resumeForGeneration={resumeForGeneration}
+          onContinue={handleContinueFromResume}
+        />
+      ) : null}
+
+      {frame === 5 && company && companyIdForJd != null ? (
+        <JobDescriptionStep
+          companyId={companyIdForJd}
+          companyName={company.name}
+          initialJobDescription={jobDescription}
+          onReady={handleJobDescriptionReady}
+        />
       ) : null}
     </main>
   )

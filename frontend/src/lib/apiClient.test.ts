@@ -123,4 +123,20 @@ describe('apiClient.request', () => {
       expect(apiErr.error_code).toBe('ConflictError')
     }
   })
+
+  it('sends FormData without forcing JSON Content-Type', async () => {
+    localStorage.setItem(ACCESS_TOKEN_KEY, 'test-access')
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ id: 1 }), { status: 201 }),
+    )
+
+    const body = new FormData()
+    body.append('file', new File(['x'], 'resume.pdf', { type: 'application/pdf' }))
+    await request('/resumes', { method: 'POST', body })
+
+    const init = vi.mocked(fetch).mock.calls[0][1] as RequestInit
+    const headers = init.headers as Record<string, string>
+    expect(headers['Content-Type']).toBeUndefined()
+    expect(init.body).toBeInstanceOf(FormData)
+  })
 })

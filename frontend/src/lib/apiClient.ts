@@ -90,7 +90,11 @@ export async function request<T>(
     ...headers,
   }
 
-  if (body !== undefined) {
+  // FormData must keep the browser-set multipart boundary — do not force JSON.
+  const isFormData =
+    typeof FormData !== 'undefined' && body instanceof FormData
+
+  if (body !== undefined && !isFormData) {
     finalHeaders['Content-Type'] = 'application/json'
   }
 
@@ -106,7 +110,12 @@ export async function request<T>(
   const response = await fetch(url, {
     method,
     headers: finalHeaders,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body:
+      body === undefined
+        ? undefined
+        : isFormData
+          ? (body as FormData)
+          : JSON.stringify(body),
   })
 
   const data = await parseBody(response)
