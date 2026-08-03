@@ -1,6 +1,6 @@
 # Progress Snapshot
 
-*Overwritten each session, not appended to. Reflects verified state as of the session ending 2026-08-01 — GENERATED_EMAILS persistence + `POST /generated-emails` endpoint (`generated_emails.py` orchestrator + `GenerateEmailRequest` / `GeneratedEmailOut` schemas). Full generate→evaluate→persist loop is HTTP-callable end to end for the first time. Full suite: `pytest` → **117 passed** against real Postgres (transaction-rollback `conftest.py`; Anthropic SDK / LLM services fully mocked — no live LLM credits). Actual terminal line: `117 passed, 63 warnings in 19.76s`.*
+*Overwritten each session, not appended to. Reflects verified state as of the session ending 2026-08-02 — frontend auth foundation (API client, AuthContext, Login/Signup pages, ProtectedRoute, routing skeleton, TanStack Query wiring, Vitest) plus AuthContext/logout fail-safety coverage. Frontend: `npm run test:run` → **14 passed** (5 files). Backend suite unchanged this session (no backend edits).*
 
 ---
 
@@ -8,55 +8,28 @@
 
 ### Verified working (functionally exercised, not just present)
 
-- **GENERATED_EMAILS persistence + generation endpoint (this session):**
-  - **Model verified:** `app/models/generated_email.py` columns match `GeneratedEmailOut` exactly (`contact_id`, `resume_id`, `job_description_id`, `subject`, `body`, `eval_score`, `eval_breakdown` JSONB, `match_data` JSONB, `gate_passed`, `created_at`) — no migration needed.
-  - **`app/schemas/generated_email.py`** — added `GenerateEmailRequest` + `GeneratedEmailOut` (existing `EmailDraft` / `MatchData` / `Eval*` unchanged).
-  - **`app/services/generated_emails.py`** — `generate_and_persist_email(db, current_user, contact_id, resume_id, job_description_id)`: ownership-filtered resume/JD load → existence-only contact load → require extractions → company FK load + company/contact consistency check → `generate_match_data` → `generate_email` → `evaluate_with_retry` → compute `eval_score` (plain mean of five dimensions) + `gate_passed` → always INSERT new row → commit/refresh/return. Cheap checks before any LLM call.
-  - **Router** — `POST /generated-emails` (auth required), `response_model=GeneratedEmailOut`, thin wrapper wired in `main.py`.
-  - **Verified:** `pytest tests/services/test_generated_emails.py` — **8 passed** (happy path + eval_score average math; wrong-owner resume/JD → NotFoundError; missing contact → NotFoundError; missing extractions → ValidationError; company mismatch → ValidationError; same triple → two distinct rows). `tests/routers/test_generated_emails.py` — **3 passed** (401 without token; 200 + `GeneratedEmailOut` shape; 404 on bad ids). Service tests use real Postgres; LLM sub-calls monkeypatched. Router tests mock the service layer.
-- **Postgres via Docker Compose** — `docker-compose.yml` at repo root, `postgres:18`, volume mounted at `/var/lib/postgresql` (not `.../data` — the 18+ layout requirement). Container runs cleanly.
-- **`backend/alembic/versions/bd31568efd53_initial_schema.py`** — applied successfully (`alembic upgrade head` ran with no errors against the real DB). Independently reviewed against `DATA_MODEL.md` §3.4–§3.8. **9 tables**.
-- **`backend/alembic/versions/97807b9a3c89_add_user_id_to_job_descriptions.py`** — additive migration adding `JOB_DESCRIPTIONS.user_id`. Confirmed applied.
-- **`app/core/config.py`, `app/db/base.py`, `app/db/session.py`** — settings-sourced DB URL, JWT, CORS, `contact_provider` / `hunter_api_key`, plus LLM settings: `anthropic_api_key`, `llm_model` (default `claude-haiku-4-5`), `llm_max_retries` (default `1`). `.env.example` updated.
-- **`app/core/enums.py`** — shared `VerificationTier`/`OutcomeEventType` in a neutral location.
-- **9 SQLAlchemy models** — FK columns only, no ORM `relationship()` associations.
-- **`app/core/security.py`** — **Verified:** `pytest tests/core/test_security.py` — **9 passed**.
-- **Auth Pydantic schemas** — `app/schemas/user.py`, `app/schemas/auth.py`.
-- **`app/core/exceptions.py`** — `AppException` hierarchy including `ConflictError` (409) and `LLMExtractionError` (502). Handler returns `{user_message, error_code}`.
-- **`app/core/deps.py`** — `get_current_user` / `get_db` exercised via HTTP auth tests.
-- **Auth service + router + `main.py` wiring** — **Verified:** `pytest tests/routers/test_auth.py` — **14 passed**.
-- **Resume schemas + service + router** — upload/list/detail + `POST /resumes/{resume_id}/extract`.
-- **Job-description schemas + service + router** — create + ownership-filtered `get_job_description_by_id` + `POST /job-descriptions/{jd_id}/extract`.
-- **MockProvider-backed contact discovery pipeline** — **Verified:** `pytest tests/services/test_contact_discovery.py` — **8 passed**.
-- **HunterProvider** — **Verified:** `pytest tests/providers/test_hunter_provider.py` — **12 passed** (HTTP mocked).
-- **Company name resolution (Clearbit)** — **Verified:** `pytest tests/services/test_company_resolution.py tests/routers/test_company_resolution.py` — **7 passed** (5 service + 2 router).
-- **LLM layer — shared client + structured extraction:**
-  - **`app/llm/client.py`** — `LLMClient` wrapping `AsyncAnthropic`. `async complete(prompt, response_schema) -> BaseModel`.
-  - **`app/llm/prompts.py`** — resume/JD extraction + matching + email/eval/refine prompts.
-  - **`app/services/extraction.py`** — `extract_resume` / `extract_job_description` with optional `llm_client=`.
-  - **Routers** — `POST /resumes/{resume_id}/extract` → `ResumeOut`; `POST /job-descriptions/{jd_id}/extract` → `JobDescriptionOut`.
-  - **Verified:** `pytest tests/llm/test_client.py` — **5 passed**; `tests/services/test_extraction.py` — **8 passed**; `tests/routers/test_extraction.py` — **6 passed**.
-- **LLM layer — match/gap analysis:**
-  - **`app/schemas/generated_email.py`** — `SkillMatch`, `ExperienceAlignment`, `MatchData` (plus email/eval/`GeneratedEmailOut` schemas).
-  - **`app/llm/prompts.py`** — `matching_prompt(resume_extraction, jd_extraction)`.
-  - **`app/services/matching.py`** — `async generate_match_data(...) -> MatchData`. No DB session, no router.
-  - **Verified:** `pytest tests/services/test_matching.py` — **3 passed**.
-- **LLM layer — email generation + eval (prior session):**
-  - **`app/schemas/generated_email.py`** — `EmailDraft`, full eval stack (`EvalGates` with `violation_detail`, `EvalDimensions`, `EvalBreakdown`, `EvalResult`).
-  - **`app/services/email_generation.py`** — `async generate_email(...) -> EmailDraft`. No DB.
-  - **`app/services/eval.py`** — `evaluate_email` / `refine` / `evaluate_with_retry` (silent single-retry gate loop).
-  - **Verified:** `pytest tests/services/test_email_generation.py` — **4 passed**; `tests/services/test_eval.py` — **6 passed**.
-- **Integration test harness** — `backend/tests/conftest.py` + real Postgres nested transactions.
-- **`backend/requirements.txt`** — includes `anthropic==0.120.2`. No `pytest-asyncio` / `respx`.
+- **Frontend auth foundation (this session):**
+  - **Deps:** `react-router-dom`, `@tanstack/react-query`; Vitest + Testing Library + jsdom wired into `vite.config.ts` / `package.json` (`test`, `test:run`).
+  - **`frontend/src/lib/apiClient.ts`** — thin `fetch` wrapper; `VITE_API_BASE_URL` from env (see `frontend/.env.example`); attaches `Authorization: Bearer` from localStorage; shared 401 handling clears tokens + `location.assign('/login')` when a Bearer token was actually sent (no refresh-on-401); throws `ApiError` with `{user_message, error_code}`.
+  - **`frontend/src/context/AuthContext.tsx`** — `login` / `signup` against real `POST /auth/login` and `POST /auth/signup` (both return `TokenPairOut` immediately); stores `access_token` + `refresh_token` in localStorage; `logout` calls real `POST /auth/logout` with `{refresh_token}`, then unconditionally clears localStorage + sets `isAuthenticated` false (try/catch around the server call; clear always runs after — already fail-safe from the initial auth-foundation write, confirmed in review); `useAuth()` hook.
+  - **Pages:** `LoginPage`, `SignupPage` (controlled forms; surface backend `user_message` on failure); placeholder `HomePage` stub.
+  - **Routing:** `BrowserRouter` in `App.tsx`; public `/login` `/signup`; `ProtectedRoute` guards `/`; root wrapped in `QueryClientProvider`.
+  - **Verified:** `npm run test:run` in `frontend/` — **14 passed** (5 files): apiClient Authorization attach/omit + 401 redirect/no-redirect; LoginPage/SignupPage success stores tokens + navigates and failure surfaces `user_message`; ProtectedRoute redirect vs render; **AuthContext logout** happy path + network reject + non-2xx all clear storage and set unauthenticated.
+- **GENERATED_EMAILS persistence + generation endpoint** — `POST /generated-emails` + `generated_emails.py` orchestrator (prior session). Backend suite last verified at **117 passed**.
+- **Postgres via Docker Compose** — `docker-compose.yml` at repo root, `postgres:18`.
+- **Alembic migrations** — initial schema + `JOB_DESCRIPTIONS.user_id`; **9 tables**.
+- **Auth (backend)** — signup/login/refresh/logout/me; bcrypt; opaque DB-backed refresh tokens.
+- **Resume / JD upload + extract**, **MockProvider + HunterProvider** discovery, **Clearbit company resolution**, **LLM layer** (extraction, matching, email generation, eval with silent retry).
 
 ### Present, but not yet exercised by anything
 
 - **`POST /contacts/discover` HTTP path** — mounted; no dedicated router TestClient suite (covered at service layer + Hunter unit tests).
+- **`POST /auth/refresh`** — backend exists; frontend does **not** call it on 401 (scoped: redirect-to-login only).
 
 ### Not started
 
+- **Frontend feature screens** — company resolution, contact discovery, resume/JD upload+extract, generated-email UI (next slice).
 - **Remaining real contact providers** — `ApolloProvider` / `AnymailProvider` deferred.
-- **Frontend** — scaffolded only (Vite + React + TS). Immediate next focus.
 - **Refresh-token rotation / reuse-detection**, **cookie-based refresh transport**, **login rate-limiting** — deferred in `OPEN_QUESTIONS.md`.
 
 ---
@@ -113,19 +86,24 @@
 36. **Always-insert-never-overwrite on `GENERATED_EMAILS`.** Deliberate divergence from `extraction.py`'s overwrite-in-place: each regeneration produces a new row so future `OUTCOMES` FKs remain valid. Same `(contact_id, resume_id, job_description_id)` → multiple rows is expected.
 37. **`eval_score` is the plain unweighted average of the five `EvalDimensions` ints**, always computed regardless of `gate_passed`. No zeroing/omitting on gate failure; gates are a separate boolean column.
 38. **Company/contact consistency check** — server rejects with `ValidationError` when `contact.company_id != job_description.company_id`. Defense-in-depth; frontend filtering is a Phase 3 forward note (see `OPEN_QUESTIONS.md`).
+39. **Frontend auth foundation (this session) — contract verification vs. task assumptions:**
+    - **Signup returns tokens immediately** — confirmed against `auth.py`: `POST /auth/signup` → `TokenPairOut` (201). Matches the prompt assumption.
+    - **Server-side logout exists** — `POST /auth/logout` with `{refresh_token}` → 204. `AuthContext.logout` calls it (then always clears localStorage). Not client-only.
+    - **Refresh endpoint exists** — `POST /auth/refresh` with `{refresh_token}` → `TokenPairOut`. Intentionally unused on 401 this slice (redirect-to-login only).
+    - **401 handler scopes to sent Authorization** — `/auth/login` also returns 401 for bad credentials (`Incorrect email or password`). Shared clear+redirect only runs when a Bearer token was actually attached, so login/signup forms can surface `user_message` without a full-page reload. Documented in `ARCHITECTURE.md` §8.
 
 ---
 
 ## What's next
 
-1. **Frontend** — thin end-to-end flow: company resolution → discovery → resume/JD upload → extract → generated email. Highest remaining risk; only piece left before the app itself is demoable.
+1. **Frontend feature screens** — company resolution + contact discovery first, then resume/JD upload → extract → generated email. Highest remaining risk before the app itself is demoable.
 2. **Stretch, only if time remains:** Apollo/Anymail, outcome-logging polish, basic analytics view.
 
 ---
 
 ## Doc notes from this session
 
-- **`DATA_MODEL.md` §2.7:** added `GenerateEmailRequest` — real gap filled (doc previously only had `GeneratedEmailOut` + "no GeneratedEmailCreate"); updated persistence wording for `EmailDraft` / `violation_detail` now that the row is written.
-- **`ARCHITECTURE.md` §2:** cited `generated_emails.py` alongside `contact_discovery.py` as a thick-service example. No §3 change (not a fifth LLM call site).
-- **`OPEN_QUESTIONS.md`:** three new Resolved entries (company/contact consistency, `eval_score` formula, always-insert); one new "Not yet discussed" (frontend company/contact filtering); past-tense updates on matching/eval Resolved entries that previously said "future generation endpoint."
-- **`product_discovery_summary.md`:** Phase 3 updated — LLM loop is fully demoable via the API; frontend is the only remaining piece before the app itself is demoable.
+- **`ARCHITECTURE.md` §8:** new Frontend Architecture section (Router, TanStack Query, apiClient 401 behavior, localStorage token tradeoff). §8.3 left unchanged on the logout follow-up — clear was already unconditional (no code change).
+- **`OPEN_QUESTIONS.md`:** refresh-token transport entry updated (localStorage makes XSS trigger less hypothetical); new Resolved entry for this session's frontend decisions.
+- **`product_discovery_summary.md`:** Phase 3 — auth foundation started; next slice named; not overstated as frontend-complete.
+- **Logout review follow-up:** test gap closed via `AuthContext.test.tsx` (happy / network reject / non-2xx). Implementation was already fail-safe — no Deviations entry for a code fix.
