@@ -526,6 +526,11 @@ export function HomePage() {
                 No contact could be found for this company right now. All
                 search tiers were tried without a usable result.
               </p>
+              {discoveryResult.fallback_reason ? (
+                <p className="fallback-reason" role="status">
+                  {discoveryResult.fallback_reason}
+                </p>
+              ) : null}
               <p className="discovery-muted">
                 A contact is required before resume and job-description steps
                 (job descriptions need the resolved company id from the

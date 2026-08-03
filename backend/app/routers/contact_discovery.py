@@ -9,6 +9,7 @@ from app.models.user import User
 from app.providers.base import ContactProvider
 from app.providers.hunter import HunterProvider
 from app.providers.mock import MockProvider
+from app.providers.mock_fixtures import DEV_SCRIPTED_RESULTS
 from app.schemas.contact import ContactDiscoveryRequest, ContactDiscoveryResponse
 from app.services import contact_discovery as contact_discovery_service
 
@@ -19,7 +20,7 @@ def _build_providers() -> list[ContactProvider]:
     settings = get_settings()
     if settings.contact_provider == "hunter":
         return [HunterProvider(api_key=settings.hunter_api_key)]
-    return [MockProvider()]
+    return [MockProvider(scripted=DEV_SCRIPTED_RESULTS)]
 
 
 @router.post("/discover", response_model=ContactDiscoveryResponse)

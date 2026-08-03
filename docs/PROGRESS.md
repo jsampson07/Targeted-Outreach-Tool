@@ -1,6 +1,6 @@
 # Progress Snapshot
 
-*Overwritten each session, not appended to. Reflects verified state as of the session ending 2026-08-03 — frontend generate-email trigger + result display (FRAME 6) on `/`. Frontend: `npm run test:run` → **39 passed** (7 files). Backend suite unchanged this session (no backend edits; prior **123 passed**).*
+*Overwritten each session, not appended to. Reflects verified state as of the session ending 2026-08-03 — wire MockProvider live-path to DEV_SCRIPTED_RESULTS + show `fallback_reason` on FRAME 3 not-found. Frontend: `npm run test:run` (HomePage not-found assertion updated). Backend: factory wiring only; MockProvider bare-default behavior unchanged.*
 
 ---
 
@@ -8,13 +8,11 @@
 
 ### Verified working (functionally exercised, not just present)
 
-- **Frontend generate-email UI / FRAME 6 (this session):**
-  - Extends the `/` home-page frame flow after JD extract: explicit **Generate Email** `useMutation` → `POST /generated-emails` with `{ contact_id, resume_id, job_description_id }` → render `GeneratedEmailOut`.
-  - Result UI: subject/body, paste-ready copy-to-clipboard (`Subject: …\n\n<body>` — no mailto/send), `eval_score` + flagged indicator when `gate_passed` is false, dimensions + two Out-only gate booleans, `match_data.overall_match_summary` inline + remaining match fields in collapsed `<details>` (mirrors discovery `confidence_breakdown`).
-  - Single-shot: after success or sessionStorage rehydrate, Generate button is hidden; failed attempts before success may Retry.
-  - **sessionStorage:** extended existing `discoveryFlow` key with `generatedEmail: GeneratedEmailOut | null`.
-  - `useResumeForGeneration` public interface unchanged (`resumeId` consumed as-is).
-  - **Verified:** HomePage tests for mutation success + persistence, 422 `user_message` + Retry, FRAME 6 rehydrate with flagged gates, clipboard copy; suite **39 passed** (7 files).
+- **Live mock-mode discovery fixtures (this session):**
+  - Root cause: `contact_discovery.py`'s `_build_providers()` constructed bare `MockProvider()` when `CONTACT_PROVIDER=mock`, so every manual/live discovery call returned zero candidates for every domain regardless of tier. Service tests never caught it — they inject their own scripted `MockProvider` instances and bypass the factory.
+  - Fix: `app/providers/mock_fixtures.py` defines `DEV_SCRIPTED_RESULTS` (`acme.com` tier-1 verified, `globex.com` pattern-guessed hiring-manager after empty earlier tiers, `empty.co` all-tiers empty). Factory passes `scripted=DEV_SCRIPTED_RESULTS`. Bare `MockProvider()` default left unchanged for tests/unscripted domains.
+  - Frontend: FRAME 3 not-found branch now renders `discoveryResult.fallback_reason` (same `role="status"` pattern as the found branch) — that field explains exhausted tiers and was previously invisible exactly when most useful.
+- **Frontend generate-email UI / FRAME 6 (prior session):** Generate Email mutation, result display, sessionStorage `generatedEmail`, single-shot.
 - **Frontend resume + JD upload/extract UI (prior session):** FRAME 4–5, `useResumeForGeneration`, sessionStorage `resume` / `jobDescription`.
 - **`GET /generated-emails/{generated_email_id}` (prior session):** join-based ownership + `EvalBreakdownOut` stripping `violation_detail`.
 - **`GET /job-descriptions/{jd_id}` (prior session):** ownership-filtered read.
@@ -28,7 +26,7 @@
 
 ### Present, but not yet exercised by anything
 
-- **`POST /contacts/discover` HTTP path** — mounted; no dedicated router TestClient suite (covered at service layer + Hunter unit tests). Frontend now calls it; backend HTTP-layer gap unchanged.
+- **`POST /contacts/discover` HTTP path** — mounted; no dedicated router TestClient suite (covered at service layer + Hunter unit tests). Frontend now calls it; live mock path now returns scripted fixtures (this session). Backend HTTP-layer test gap unchanged.
 - **`POST /auth/refresh`** — backend exists; frontend does **not** call it on 401 (scoped: redirect-to-login only).
 - **`GET /job-descriptions/{jd_id}` / `GET /resumes/{id}` / `GET /generated-emails/{id}`** — available for refetch-by-id; this slice rehydrates paid results from sessionStorage instead.
 
@@ -101,7 +99,7 @@
     - **Server-side logout exists** — `POST /auth/logout` with `{refresh_token}` → 204. `AuthContext.logout` calls it (then always clears localStorage). Not client-only.
     - **Refresh endpoint exists** — `POST /auth/refresh` with `{refresh_token}` → `TokenPairOut`. Intentionally unused on 401 this slice (redirect-to-login only).
     - **401 handler scopes to sent Authorization** — `/auth/login` also returns 401 for bad credentials (`Incorrect email or password`). Shared clear+redirect only runs when a Bearer token was actually attached, so login/signup forms can surface `user_message` without a full-page reload. Documented in `ARCHITECTURE.md` §8.
-40. **Discovery-flow UI sessionStorage key shape:** single key `discoveryFlow` — originally `{ company, discoveryResult }`; extended to `{ company, discoveryResult, resume, jobDescription }`; **this session extended** to `{ company, discoveryResult, resume, jobDescription, generatedEmail }` (same key, not a sibling).
+40. **Discovery-flow UI sessionStorage key shape:** single key `discoveryFlow` — originally `{ company, discoveryResult }`; extended to `{ company, discoveryResult, resume, jobDescription }`; extended to `{ company, discoveryResult, resume, jobDescription, generatedEmail }` (same key, not a sibling).
 41. **`GET /job-descriptions/{jd_id}` (prior session):** no deviations from the prompt. Helper already enforced id+user_id; route is a one-liner reuse.
 42. **`GET /generated-emails/{id}` (prior session):** Option A (join via resume) shipped as specified — Out-only gates shapes for `violation_detail`.
 43. **Resume/JD frontend slice (prior session) — Step 0 contract vs docs:**
@@ -109,11 +107,12 @@
     - **JD create is JSON** `{raw_text, company_id, role_title}` as documented; Out includes `user_id`.
     - **Paths:** `POST /resumes`, `POST /resumes/{id}/extract`, `POST /job-descriptions`, `POST /job-descriptions/{jd_id}/extract`, `GET /job-descriptions/{jd_id}` — match live `main.py` prefixes.
     - **`company_id` is not on Frame 1's locked company** — only on found `ContactOut`. Contact-null discovery cannot continue to JD without a backend change; UI gates Continue accordingly.
-44. **Generate-email frontend slice (this session) — Step 0 contract vs docs:**
+44. **Generate-email frontend slice (prior session) — Step 0 contract vs docs:**
     - **No schema/contract gap vs `DATA_MODEL.md` §2.7.** Live `GenerateEmailRequest` / `GeneratedEmailOut` / `EvalGatesOut` / `MatchData` match the documented shapes. `gate_passed` is top-level. `EvalGatesOut` omits `violation_detail` on the POST response (same Out model as GET-by-id). `DATA_MODEL.md` left untouched.
     - **Path:** `POST /generated-emails` confirmed via `main.py` prefix + router `POST ""`.
     - **422 mismatch `user_message`:** `"Contact and job description must belong to the same company. Contact is tied to company_id=…; job description is tied to company_id=…."` — frontend surfaces via `ApiError.user_message`.
     - **Backend files live under `backend/app/…`** (monorepo layout); prompt paths `app/routers/…` resolve there.
+45. **Live mock-mode factory gap (this session — bug fix / deviation from Phase 0 intent):** Until this fix, `_build_providers()` used bare `MockProvider()` under `CONTACT_PROVIDER=mock`, so the live HTTP path never returned a found contact despite orchestration being validated at the service-test level with scripted providers. Phase 0's "mock/fixture provider simulating realistic scenarios" was only true for tests, not for manual/dev UI runs. Fixed by wiring `DEV_SCRIPTED_RESULTS` at the factory; documented in `ARCHITECTURE.md` §4.5. Not a schema change.
 
 ---
 
@@ -127,8 +126,6 @@
 
 ## Doc notes from this session
 
-- **`ARCHITECTURE.md`:** §8.1/§8.2.1/§8.2.2 updated for generate-email; new §8.2.4 documenting FRAME 6 (trigger, verified contract, copy-to-clipboard, gate_passed flagged UI, match_data collapsed-details mirroring confidence_breakdown, single-shot, sessionStorage `generatedEmail`).
-- **`DATA_MODEL.md`:** untouched — live contract matched §2.7 (no gap to fill).
-- **`OPEN_QUESTIONS.md`:** new Explicitly deferred entry for single-shot vs regenerate (prompt-quality-first if revisit).
-- **`product_discovery_summary.md`:** untouched — MVP scope unchanged (grounded generation + rubric check already locked; this slice only landed the UI).
-- **`PROGRESS.md`:** overwritten for this slice.
+- **`ARCHITECTURE.md`:** new §4.5 documenting `DEV_SCRIPTED_RESULTS` domains (`acme.com` / `globex.com` / `empty.co`) and how to exercise each scenario via FRAME 1 manual domain entry.
+- **`PROGRESS.md`:** overwritten for this bugfix.
+- **`DATA_MODEL.md` / `product_discovery_summary.md` / `OPEN_QUESTIONS.md`:** untouched — no schema, scope, or new open design question.
