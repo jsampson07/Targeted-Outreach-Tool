@@ -1,4 +1,5 @@
 import type { JobDescriptionOut, ResumeOut } from './documentTypes'
+import type { GeneratedEmailOut } from './generatedEmailTypes'
 
 /** Types mirroring backend CompanySearch* / ContactDiscovery* schemas. */
 
@@ -49,15 +50,16 @@ export type LockedCompany = {
 }
 
 /**
- * Single sessionStorage payload for the home-page flow (discovery + documents).
- * Key: "discoveryFlow" — see discoverySession.ts for persistence rules.
+ * Single sessionStorage payload for the home-page flow (discovery + documents
+ * + generated email). Key: "discoveryFlow" — see discoverySession.ts.
  *
- * ``resume`` / ``jobDescription`` hold post-extract Out objects so a refresh
- * rehydrates FRAME 4/5 without re-calling paid ``/extract`` endpoints.
+ * ``resume`` / ``jobDescription`` / ``generatedEmail`` hold paid-call Out
+ * objects so a refresh rehydrates without re-spending LLM/provider credits.
  */
 export type PersistedDiscoveryFlow = {
   company: LockedCompany | null
   discoveryResult: ContactDiscoveryResponse | null
   resume: ResumeOut | null
   jobDescription: JobDescriptionOut | null
+  generatedEmail: GeneratedEmailOut | null
 }

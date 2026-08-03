@@ -4,16 +4,17 @@ import type {
   PersistedDiscoveryFlow,
 } from './discoveryTypes'
 import type { JobDescriptionOut, ResumeOut } from './documentTypes'
+import type { GeneratedEmailOut } from './generatedEmailTypes'
 
 /**
  * Namespaced sessionStorage key for the home-page flow (company resolution,
- * contact discovery, resume/JD extract results). One JSON object — not
- * multiple keys.
+ * contact discovery, resume/JD extract results, generated email). One JSON
+ * object — not multiple keys.
  *
  * sessionStorage (not localStorage) is deliberate: a discovered contact's
- * name/email is third-party PII, and extract results are paid LLM outputs.
- * sessionStorage clears on tab close (bounded exposure); localStorage would
- * leave them sitting indefinitely.
+ * name/email is third-party PII, and extract/generate results are paid LLM
+ * outputs. sessionStorage clears on tab close (bounded exposure); localStorage
+ * would leave them sitting indefinitely.
  */
 export const DISCOVERY_FLOW_KEY = 'discoveryFlow'
 
@@ -22,6 +23,7 @@ const EMPTY: PersistedDiscoveryFlow = {
   discoveryResult: null,
   resume: null,
   jobDescription: null,
+  generatedEmail: null,
 }
 
 export function readDiscoveryFlow(): PersistedDiscoveryFlow {
@@ -36,6 +38,7 @@ export function readDiscoveryFlow(): PersistedDiscoveryFlow {
       discoveryResult: parsed.discoveryResult ?? null,
       resume: parsed.resume ?? null,
       jobDescription: parsed.jobDescription ?? null,
+      generatedEmail: parsed.generatedEmail ?? null,
     }
   } catch {
     return EMPTY
@@ -51,12 +54,13 @@ export function writeCompanyLock(company: LockedCompany): void {
   // FRAME 2 rehydrates to FRAME 2, not FRAME 1. Candidate lists from
   // /companies/search are intentionally NOT persisted — that call is free
   // (keyless Clearbit) and idempotent; re-running on refresh is fine.
-  // New company lock clears discovery + document results for this search.
+  // New company lock clears discovery + document + email results.
   writeFlow({
     company,
     discoveryResult: null,
     resume: null,
     jobDescription: null,
+    generatedEmail: null,
   })
 }
 
@@ -68,12 +72,13 @@ export function writeDiscoveryResult(
   // completed outcomes. POST /contacts/discover spends real, rationed provider
   // credits (Hunter: 50/month). Persisting so a refresh rehydrates FRAME 3
   // from storage (no re-fetch) is a correctness/cost concern, not UX polish.
-  // Clear document fields: a new discovery starts a new search pipeline.
+  // Clear document/email fields: a new discovery starts a new search pipeline.
   writeFlow({
     company,
     discoveryResult,
     resume: null,
     jobDescription: null,
+    generatedEmail: null,
   })
 }
 
@@ -83,12 +88,14 @@ export function writeResumeResult(
   resume: ResumeOut,
 ): void {
   // Persist after successful upload+extract so refresh does not re-pay LLM.
+  // A new resume invalidates any prior generated email for this search.
   const current = readDiscoveryFlow()
   writeFlow({
     company,
     discoveryResult,
     resume,
     jobDescription: current.jobDescription,
+    generatedEmail: null,
   })
 }
 
@@ -103,6 +110,23 @@ export function writeJobDescriptionResult(
     discoveryResult,
     resume,
     jobDescription,
+    generatedEmail: null,
+  })
+}
+
+export function writeGeneratedEmailResult(
+  company: LockedCompany,
+  discoveryResult: ContactDiscoveryResponse,
+  resume: ResumeOut,
+  jobDescription: JobDescriptionOut,
+  generatedEmail: GeneratedEmailOut,
+): void {
+  writeFlow({
+    company,
+    discoveryResult,
+    resume,
+    jobDescription,
+    generatedEmail,
   })
 }
 

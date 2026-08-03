@@ -188,7 +188,9 @@
 }
 
 .discovery-found > button,
-.extraction-summary + button {
+.extraction-summary + button,
+.primary-action,
+.email-draft + button {
   margin-top: 0.5rem;
   padding: 0.65rem 1rem;
   border: 1px solid var(--border);
@@ -197,6 +199,121 @@
   color: var(--bg);
   font: inherit;
   cursor: pointer;
+}
+
+.primary-action:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.email-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.75rem 1.25rem;
+  margin: 0 0 1.25rem;
+}
+
+.eval-score {
+  margin: 0 !important;
+  color: var(--text-h);
+  font-weight: 600;
+}
+
+.gate-status {
+  margin: 0 !important;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.gate-passed {
+  color: #1f6b3a;
+}
+
+.gate-flagged {
+  padding: 0.35rem 0.6rem;
+  border: 1px solid #b42318;
+  border-radius: 4px;
+  background: rgba(180, 35, 24, 0.08);
+  color: #b42318;
+}
+
+.email-draft {
+  margin-bottom: 1rem;
+}
+
+.email-subject {
+  margin: 0 0 1rem !important;
+  color: var(--text-h);
+  font-weight: 600;
+}
+
+.email-body {
+  margin: 0 0 0.5rem;
+  padding: 0.85rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.45);
+  color: var(--text-h);
+  font: inherit;
+  white-space: pre-wrap;
+  line-height: 1.5;
+  overflow-x: auto;
+}
+
+.eval-breakdown {
+  margin-top: 1.5rem;
+}
+
+.eval-dimensions,
+.eval-gates {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0 0 1.25rem;
+}
+
+.eval-dimensions > div,
+.eval-gates > div {
+  display: grid;
+  grid-template-columns: 14rem 1fr;
+  gap: 0.5rem;
+}
+
+.eval-dimensions dt,
+.eval-gates dt {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.eval-dimensions dd,
+.eval-gates dd {
+  margin: 0;
+  color: var(--text-h);
+}
+
+.match-summary-block {
+  margin-top: 0.5rem;
+}
+
+.match-summary {
+  margin: 0 0 1rem !important;
+  color: var(--text-h);
+  line-height: 1.5;
+}
+
+.match-data-details {
+  margin: 0 0 1rem;
+}
+
+.match-data-details summary {
+  cursor: pointer;
+  color: var(--text-h);
+  font-weight: 600;
+}
+
+.match-data-details .extraction-block {
+  margin-top: 0.75rem;
 }
 
 .extraction-summary {
