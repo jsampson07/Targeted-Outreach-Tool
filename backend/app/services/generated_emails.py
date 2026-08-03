@@ -14,6 +14,7 @@ from app.core.exceptions import NotFoundError, ValidationError
 from app.models.company import Company
 from app.models.contact import Contact
 from app.models.generated_email import GeneratedEmail
+from app.models.resume import Resume
 from app.models.user import User
 from app.schemas.job_description import JDExtraction
 from app.schemas.resume import ResumeExtraction
@@ -22,6 +23,35 @@ from app.services import resume as resume_service
 from app.services.email_generation import generate_email
 from app.services.eval import evaluate_with_retry
 from app.services.matching import generate_match_data
+
+
+def get_generated_email_by_id(
+    db: Session, user: User, generated_email_id: int
+) -> GeneratedEmail:
+    """Fetch one generated email by id, scoped to the caller's resumes.
+
+    ``GENERATED_EMAILS`` has no ``user_id`` column — ownership is established
+    by joining to ``RESUMES`` and filtering on ``Resume.user_id``. Safe because
+    ``generate_and_persist_email`` only ever writes rows whose resume and JD
+    were both loaded through ownership-filtered helpers for the same user.
+    """
+    row = (
+        db.query(GeneratedEmail)
+        .join(Resume, GeneratedEmail.resume_id == Resume.id)
+        .filter(
+            GeneratedEmail.id == generated_email_id,
+            Resume.user_id == user.id,
+        )
+        .first()
+    )
+    if row is None:
+        raise NotFoundError(
+            detail=(
+                f"GeneratedEmail id={generated_email_id} "
+                f"not found for user_id={user.id}"
+            )
+        )
+    return row
 
 
 async def generate_and_persist_email(
