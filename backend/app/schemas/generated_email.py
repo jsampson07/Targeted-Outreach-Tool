@@ -5,8 +5,9 @@ output shapes with no backing table of their own — they persist as the
 ``match_data`` JSONB field on ``GENERATED_EMAILS`` (DATA_MODEL.md §2.7).
 ``EmailDraft`` is the ephemeral generation/refine output shape (subject/body
 only) — not persisted on its own. ``EvalResult`` / ``EvalBreakdown`` are the
-LLM-judge shapes; the final breakdown persists on ``GENERATED_EMAILS`` and is
-returned via ``GeneratedEmailOut``.
+LLM-judge shapes (including ``violation_detail`` for refine). The persisted
+breakdown is returned via ``GeneratedEmailOut`` using ``EvalBreakdownOut``,
+which strips ``violation_detail`` at the API boundary.
 """
 
 from __future__ import annotations
@@ -43,9 +44,18 @@ class EmailDraft(BaseModel):
 
 
 class EvalGates(BaseModel):
+    """Internal judge/refine shape — includes violation_detail for refine()."""
+
     no_unsupported_claims: bool
     correct_contact_name_used: bool
     violation_detail: str | None = None
+
+
+class EvalGatesOut(BaseModel):
+    """Client-facing gates — omits violation_detail (internal refine feedback)."""
+
+    no_unsupported_claims: bool
+    correct_contact_name_used: bool
 
 
 class EvalDimensions(BaseModel):
@@ -58,6 +68,13 @@ class EvalDimensions(BaseModel):
 
 class EvalBreakdown(BaseModel):
     gates: EvalGates
+    dimensions: EvalDimensions
+
+
+class EvalBreakdownOut(BaseModel):
+    """Client-facing breakdown — gates omit violation_detail."""
+
+    gates: EvalGatesOut
     dimensions: EvalDimensions
 
 
@@ -81,7 +98,7 @@ class GeneratedEmailOut(BaseModel):
     subject: str
     body: str
     eval_score: float
-    eval_breakdown: EvalBreakdown
+    eval_breakdown: EvalBreakdownOut
     match_data: MatchData
     gate_passed: bool
     created_at: datetime

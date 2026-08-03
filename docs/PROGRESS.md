@@ -1,6 +1,6 @@
 # Progress Snapshot
 
-*Overwritten each session, not appended to. Reflects verified state as of the session ending 2026-08-02 — backend `GET /job-descriptions/{jd_id}` ownership-filtered read route (closes OPEN_QUESTIONS "JD read-access control"). Backend: pytest → **120 passed** (prior 117 + 3 new GET cases). Frontend suite unchanged this session (no frontend edits).*
+*Overwritten each session, not appended to. Reflects verified state as of the session ending 2026-08-02 — backend `GET /generated-emails/{generated_email_id}` with join-based ownership + `violation_detail` API-boundary fix. Backend: pytest → **123 passed** (prior 120 + 3 new GET cases). Frontend suite unchanged this session (no frontend edits).*
 
 ---
 
@@ -8,12 +8,14 @@
 
 ### Verified working (functionally exercised, not just present)
 
-- **`GET /job-descriptions/{jd_id}` (this session):**
-  - Thin router endpoint, `response_model=JobDescriptionOut`, auth required.
-  - Reuses existing `get_job_description_by_id(db, user, jd_id)` — id+user_id filter confirmed before wiring; no new query logic.
-  - Missing and wrong-owner rows both → `NotFoundError` / 404 (same non-distinguishing pattern as resumes GET-by-id).
-  - Returns current row state including `extracted_data` (null pre-extraction, populated post-extraction) without re-running LLM extraction.
-  - **Verified:** 3 new router tests in `tests/routers/test_job_description.py` — owner happy path (null then populated `extracted_data`), nonexistent id → 404, wrong-owner → 404 (same `user_message` as missing). Full backend suite **120 passed**.
+- **`GET /generated-emails/{generated_email_id}` (this session):**
+  - Thin router endpoint, `response_model=GeneratedEmailOut`, auth required.
+  - New helper `get_generated_email_by_id(db, user, generated_email_id)` — joins `GeneratedEmail` → `Resume` on `resume_id`, filters `GeneratedEmail.id` + `Resume.user_id == user.id`. No `user_id` on `GENERATED_EMAILS` (confirmed on the ORM model).
+  - Relies on write-time invariant from `generate_and_persist_email` (resume + JD both ownership-filtered for the same user); does not re-verify that invariant at read time.
+  - Missing and wrong-owner rows both → `NotFoundError` / 404 (non-distinguishing).
+  - **`violation_detail` audit (pre-existing bug, fixed this session):** `GeneratedEmailOut` previously typed `eval_breakdown` as full internal `EvalBreakdown`/`EvalGates`, which would serialize judge refine text to the client on every Out response (including existing `POST /generated-emails`). Fixed via `EvalGatesOut` / `EvalBreakdownOut` (no `violation_detail`); `GeneratedEmailOut.eval_breakdown` now uses `EvalBreakdownOut`. JSONB may still store the field; Out strips it.
+  - **Verified:** 3 new router tests in `tests/routers/test_generated_emails.py` — owner happy path (asserting `violation_detail` absent even when present on the persisted JSONB), nonexistent id → 404, wrong-owner → 404 (same `user_message` as missing). Full backend suite **123 passed**.
+- **`GET /job-descriptions/{jd_id}` (prior session):** ownership-filtered read reusing `get_job_description_by_id`.
 - **Frontend discovery flow UI (prior session):** three-frame state machine on `/`, TanStack `useMutation` for both POSTs, sessionStorage persistence/rehydration. Frontend: `npm run test:run` → **25 passed** (6 files) — unchanged this session.
 - **Frontend auth foundation (prior session):** apiClient, AuthContext, Login/Signup, ProtectedRoute, TanStack Query root, Vitest wiring.
 - **GENERATED_EMAILS persistence + generation endpoint** — `POST /generated-emails` + `generated_emails.py` orchestrator.
@@ -29,9 +31,10 @@
 
 ### Not started
 
-- **Frontend resume/JD upload → extract → generated-email UI** (next slice; accumulates on the same `/` home page). Unblocked for JD refetch-by-id by this session's GET route.
+- **Frontend resume/JD upload → extract → generated-email UI** (next slice; accumulates on the same `/` home page).
 - **Remaining real contact providers** — `ApolloProvider` / `AnymailProvider` deferred.
 - **Refresh-token rotation / reuse-detection**, **cookie-based refresh transport**, **login rate-limiting** — deferred in `OPEN_QUESTIONS.md`.
+- **`GENERATED_EMAILS.user_id` denormalization (Option B)** — deferred; Option A (join) shipped this session.
 
 ---
 
@@ -77,7 +80,7 @@
     - **`matching_prompt` serializes both extractions via `model_dump_json(indent=2)`** inside fenced JSON blocks, and embeds `MatchData.model_json_schema()` the same way extraction prompts do.
     - **No dedicated match/gap HTTP endpoint** — deliberate; see `OPEN_QUESTIONS.md` Resolved. Product surfacing is via `match_data` on `GeneratedEmailOut`.
     - **`generate_match_data` does not check `extracted_data is not None`** — that check lives in `generated_emails.py` (the DB-loading caller).
-29. **`EvalGates.violation_detail` added after the original schema lock.** Free-form `str | None` (not a fixed violation-type enum), populated only when a Tier 1 gate fails, solely to feed `refine()`'s feedback argument. Never shown to the user; not persisted independently (rides inside `eval_breakdown` JSONB). Documented in `DATA_MODEL.md` §2.7 and `OPEN_QUESTIONS.md` Resolved.
+29. **`EvalGates.violation_detail` added after the original schema lock.** Free-form `str | None` (not a fixed violation-type enum), populated only when a Tier 1 gate fails, solely to feed `refine()`'s feedback argument. Not persisted independently (rides inside `eval_breakdown` JSONB). **Client exclusion now enforced** via `EvalGatesOut` / `EvalBreakdownOut` on `GeneratedEmailOut` (this session) — earlier "never shown" wording was aspirational until that Out split.
 30. **`EmailDraft` is a non-persisted schema** (`subject` + `body`) for generation/refine LLM I/O. Separate from `GeneratedEmailOut` so ephemeral draft shapes aren't conflated with the persisted API response.
 31. **`generate_email` / `evaluate_email` take explicit primitives** (`contact_name`, `contact_title`, `company_name`, `role_title` as needed) plus `MatchData` / `EmailDraft` — not ORM/DB objects, no DB session. Ownership/loading lives in `generated_emails.py`.
 32. **`evaluate_with_retry` owns gate-retry orchestration inside `eval.py`**, not a separate module and not the router. `refine` stays the standalone reusable primitive for the product doc's v1.1+ multi-turn path. On gate failure with a missing `violation_detail`, a short fallback feedback string is used so `refine` always receives `str`.
@@ -93,20 +96,21 @@
     - **Refresh endpoint exists** — `POST /auth/refresh` with `{refresh_token}` → `TokenPairOut`. Intentionally unused on 401 this slice (redirect-to-login only).
     - **401 handler scopes to sent Authorization** — `/auth/login` also returns 401 for bad credentials (`Incorrect email or password`). Shared clear+redirect only runs when a Bearer token was actually attached, so login/signup forms can surface `user_message` without a full-page reload. Documented in `ARCHITECTURE.md` §8.
 40. **Discovery-flow UI sessionStorage key shape:** single key `discoveryFlow` storing `{ company: { name, domain } | null, discoveryResult: ContactDiscoveryResponse | null }` — matches the prompt's specified shape (no deviation). Manual fallback collects both company name and domain (domain alone would leave FRAME 2 confirmation without a display name); name is prefilled from the failed/empty search query when available.
-41. **`GET /job-descriptions/{jd_id}` (this session):** no deviations from the prompt. Helper already enforced id+user_id; route is a one-liner reuse. Extract endpoint untouched. `JobDescriptionOut` schema unchanged (`DATA_MODEL.md` §2.3 snippet still omits live `user_id` on the Out model — pre-existing drift from deviation #11, not introduced here).
+41. **`GET /job-descriptions/{jd_id}` (prior session):** no deviations from the prompt. Helper already enforced id+user_id; route is a one-liner reuse.
+42. **`GET /generated-emails/{id}` (this session):** Option A (join via resume) shipped as specified — no silent upgrade to Option B. Pre-existing `violation_detail` client exposure was a real bug (docs claimed "never shown"; schema did not enforce it); fixed with Out-only gates shapes rather than leaving it. No other deviations from the prompt. `ARCHITECTURE.md` / `product_discovery_summary.md` untouched.
 
 ---
 
 ## What's next
 
-1. **Frontend resume/JD upload → extract → generated email** on the same persistent `/` home page. Highest remaining risk before the app itself is demoable. JD refetch-by-id is now available server-side.
+1. **Frontend resume/JD upload → extract → generated email** on the same persistent `/` home page. Highest remaining risk before the app itself is demoable.
 2. **Stretch, only if time remains:** Apollo/Anymail, outcome-logging polish, basic analytics view.
 
 ---
 
 ## Doc notes from this session
 
-- **`OPEN_QUESTIONS.md`:** "JD read-access control" moved from Explicitly deferred → Resolved. States that the new GET reuses `get_job_description_by_id` (no new query logic) and that the wrong-owner test verifies the trigger was honored.
-- **`DATA_MODEL.md` §2.3:** short decision note — GET-by-id exists, why (frontend refetch without re-extract or browser storage of raw text), no schema change.
+- **`DATA_MODEL.md` §2.7:** schema snippet updated for `EvalGatesOut` / `EvalBreakdownOut` and `GeneratedEmailOut.eval_breakdown: EvalBreakdownOut`; new decision notes for (1) API-boundary fix for `violation_detail`, (2) join-based GET ownership + write-time invariant.
+- **`OPEN_QUESTIONS.md`:** new Explicitly deferred entry "GENERATED_EMAILS.user_id denormalization" (Option A shipped, Option B deferred with analytics/load-test trigger). Resolved `violation_detail` entry updated to note the Out-schema enforcement.
 - **`ARCHITECTURE.md` / `product_discovery_summary.md`:** untouched — nothing in this slice contradicted what they already say.
 - **`PROGRESS.md`:** overwritten for this slice.

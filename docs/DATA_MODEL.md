@@ -195,9 +195,15 @@ tier being exhausted with zero candidates found.
 
 ```python
 class EvalGates(BaseModel):
+    """Internal judge/refine shape — includes violation_detail for refine()."""
     no_unsupported_claims: bool
     correct_contact_name_used: bool
     violation_detail: str | None = None
+
+class EvalGatesOut(BaseModel):
+    """Client-facing gates — omits violation_detail (internal refine feedback)."""
+    no_unsupported_claims: bool
+    correct_contact_name_used: bool
 
 class EvalDimensions(BaseModel):
     role_company_specificity: int   # 1-5
@@ -208,6 +214,11 @@ class EvalDimensions(BaseModel):
 
 class EvalBreakdown(BaseModel):
     gates: EvalGates
+    dimensions: EvalDimensions
+
+class EvalBreakdownOut(BaseModel):
+    """Client-facing breakdown — gates omit violation_detail."""
+    gates: EvalGatesOut
     dimensions: EvalDimensions
 
 class EvalResult(EvalBreakdown):
@@ -249,7 +260,7 @@ class GeneratedEmailOut(BaseModel):
     subject: str
     body: str
     eval_score: float
-    eval_breakdown: EvalBreakdown
+    eval_breakdown: EvalBreakdownOut
     match_data: MatchData
     gate_passed: bool
     created_at: datetime
@@ -260,7 +271,11 @@ class GeneratedEmailOut(BaseModel):
 
 **Decision (gap filled):** `GenerateEmailRequest` was never defined in this document previously — §2.7 only specified `GeneratedEmailOut` and noted "no `GeneratedEmailCreate`" without naming the actual request body. That was a real documentation gap, not a rename: the endpoint takes `{contact_id, resume_id, job_description_id}` and the server owns generation, scoring, and persistence. Added here to match `app/schemas/generated_email.py` / `POST /generated-emails`.
 
-**Decision (revision):** `EvalGates.violation_detail: str | None = None` was added after the original schema lock. It is free-form text (not a fixed violation-type enum) populated by the LLM judge only when at least one Tier 1 gate is `False`, naming the specific problem (e.g. which claim isn't traceable to `match_data`, or how the contact name/title was wrong). It exists solely to feed `refine(email, feedback)` — it is never shown to the user and is not persisted as its own column (it rides along inside the persisted `eval_breakdown` JSONB on `GENERATED_EMAILS`). A fixed enum was considered and rejected: gate failures are too situation-specific for a closed category list to stay useful as refine feedback without constantly expanding the enum.
+**Decision (revision):** `EvalGates.violation_detail: str | None = None` was added after the original schema lock. It is free-form text (not a fixed violation-type enum) populated by the LLM judge only when at least one Tier 1 gate is `False`, naming the specific problem (e.g. which claim isn't traceable to `match_data`, or how the contact name/title was wrong). It exists solely to feed `refine(email, feedback)` — it is not persisted as its own column (it rides along inside the persisted `eval_breakdown` JSONB on `GENERATED_EMAILS`). A fixed enum was considered and rejected: gate failures are too situation-specific for a closed category list to stay useful as refine feedback without constantly expanding the enum.
+
+**Decision (API boundary fix):** Earlier docs claimed `violation_detail` "is never shown to the user," but `GeneratedEmailOut.eval_breakdown` was typed as the full internal `EvalBreakdown` / `EvalGates` — so FastAPI would have serialized `violation_detail` on every `GeneratedEmailOut` response (including the pre-existing `POST /generated-emails`). Fixed by introducing response-only `EvalGatesOut` / `EvalBreakdownOut` (no `violation_detail`) and pointing `GeneratedEmailOut.eval_breakdown` at `EvalBreakdownOut`. The internal `EvalGates` / `EvalBreakdown` / `EvalResult` shapes retain the field for judge → refine. The JSONB column may still contain `violation_detail`; the Out schema strips it at serialization time.
+
+**Decision (GET-by-id ownership):** `GET /generated-emails/{generated_email_id}` scopes reads via a join — `GeneratedEmail` → `Resume` on `resume_id`, filter `GeneratedEmail.id` + `Resume.user_id == current_user.id`. There is no `user_id` column on `GENERATED_EMAILS` (confirmed on the ORM model). This is sufficient because `generate_and_persist_email` loads both `resume_id` and `job_description_id` through ownership-filtered helpers scoped to `current_user` at write time, so `resume.user_id == job_description.user_id` holds for every existing row by construction. Missing and wrong-owner rows both raise `NotFoundError` (non-distinguishing 404). A denormalized `user_id` column was considered and deferred — see `OPEN_QUESTIONS.md` "GENERATED_EMAILS.user_id denormalization".
 
 **Decision:** `EmailDraft` is the ephemeral LLM structured-output shape for generation and refine (`subject` + `body` only). It is not a persisted entity and has no backing table — `GENERATED_EMAILS` stores subject/body as columns on the row written by `app/services/generated_emails.py`. Keeping draft I/O separate from `GeneratedEmailOut` avoids conflating "what the model just produced" with "what was saved and returned to the client."
 
