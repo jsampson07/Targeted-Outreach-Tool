@@ -222,3 +222,41 @@ class CompanySearchResponse(BaseModel):
 **Known limitation, accepted for v1:** Clearbit's Autocomplete dataset has a real coverage gap for very recently founded/launched companies (empirically confirmed — a company that publicly launched roughly seven weeks prior to testing did not resolve). This is expected to be rare for this product's actual usage pattern (most applicants target established companies with an existing job posting and careers page), and it's exactly what the manual-domain fallback exists to catch. Not treated as a blocker; worth revisiting only if real usage shows this gap hit often in practice.
 
 **Alternative considered:** Checking whether Apollo (already a paid, budgeted provider for the core pipeline) exposes its own organization-search-by-name endpoint, avoiding a fourth external dependency entirely. Not ruled out — genuinely unverified against Apollo's actual API surface — just not pursued yet in favor of shipping with Clearbit first.
+
+---
+
+## 8. Frontend Architecture
+
+**Decision:** Vite + React + TypeScript SPA under `frontend/`, with React Router for navigation, TanStack Query at the root for server-state, a thin shared `fetch` wrapper (`src/lib/apiClient.ts`) for HTTP, and React Context (`AuthContext`) for auth session state — not Redux/Zustand at this scale.
+
+### 8.1 Routing
+
+**Decision:** `react-router-dom` (`BrowserRouter`) with public `/login` `/signup` routes and a `ProtectedRoute` wrapper that redirects to `/login` when `!isAuthenticated`. A single placeholder home route (`/`) stands in for feature screens that later slices will replace.
+
+**Reasoning:** At this scale there is no serious alternative worth debating — React Router is the default for React SPAs, and the protected-route pattern matches the JWT-gated backend without inventing a custom gate. Feature screens are deliberately *not* built in the auth-foundation slice so routing stays a thin skeleton.
+
+### 8.2 Server state: TanStack Query
+
+**Decision:** Wrap the app in `QueryClientProvider` from `@tanstack/react-query` at the root (`main.tsx`), even before the first feature screen makes heavy use of it.
+
+**Reasoning:** Manual `useEffect` + `useState` per API call duplicates loading/error/retry handling across every data-fetching component — a real maintenance cost once company resolution, discovery, uploads, and email generation all hit the network, not just a style preference. Installing the provider now means later slices opt into `useQuery`/`useMutation` without a second wiring pass. Auth login/signup stay on Context + imperative `apiClient` calls (form submit, token side effects) rather than being forced through Query.
+
+**Alternative considered:** Skip TanStack Query until the first feature screen needs caching. Rejected because the root provider is cheap and the duplicated-boilerplate cost shows up immediately across multiple API-calling screens planned for the next slice.
+
+### 8.3 API client and shared 401 handling
+
+**Decision:** A single `request(path, options)` wrapper around `fetch` (not axios). Base URL from `import.meta.env.VITE_API_BASE_URL`. Attaches `Authorization: Bearer <access_token>` from localStorage when present. On non-2xx, throws an `ApiError` carrying the backend's `{user_message, error_code}` shape so UI code can surface `user_message` directly. On **401 when an Authorization header was actually sent**: clear both tokens from localStorage and `window.location.assign('/login')` — no refresh attempt.
+
+**Reasoning:** One shared 401 path means callers never re-implement "session died" behavior. Refresh-on-401 is deliberately out of scope for this slice (redirect-to-login only); `POST /auth/refresh` exists on the backend but is unused here. The "Authorization was sent" guard matters because `/auth/login` also returns 401 for bad credentials — without it, a failed login would clear storage and force a full-page reload instead of showing `user_message` on the form.
+
+**Backend contract verified against `app/routers/auth.py` / `app/schemas/auth.py`:**
+- `POST /auth/signup` → `TokenPairOut` (201) — tokens returned immediately
+- `POST /auth/login` → `TokenPairOut`
+- `POST /auth/refresh` → `TokenPairOut` (body: `{refresh_token}`) — present, unused on 401
+- `POST /auth/logout` → 204 (body: `{refresh_token}`) — client logout calls this, then clears localStorage
+
+### 8.4 Token storage: localStorage
+
+**Decision:** Persist `access_token` and `refresh_token` in `localStorage`.
+
+**Reasoning / tradeoff:** Matches the backend's current JSON-body refresh transport (no httpOnly cookie). Any XSS that can run script in the origin can read those tokens — that is the concrete risk this choice accepts. This does **not** reopen or flip the deferred cookie-transport decision; it is the client-side half of the same simplicity choice. See `OPEN_QUESTIONS.md` ("Refresh-token transport") for the revisit trigger, which is no longer purely theoretical now that localStorage is the live storage mechanism.
