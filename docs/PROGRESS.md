@@ -1,6 +1,6 @@
 # Progress Snapshot
 
-*Overwritten each session, not appended to. Reflects verified state as of the session ending 2026-08-02 — frontend company resolution + contact discovery flow (three-frame state machine on `/`, TanStack `useMutation` for both POSTs, sessionStorage persistence/rehydration, Vitest coverage). Frontend: `npm run test:run` → **25 passed** (6 files). Backend suite unchanged this session (no backend edits).*
+*Overwritten each session, not appended to. Reflects verified state as of the session ending 2026-08-02 — backend `GET /job-descriptions/{jd_id}` ownership-filtered read route (closes OPEN_QUESTIONS "JD read-access control"). Backend: pytest → **120 passed** (prior 117 + 3 new GET cases). Frontend suite unchanged this session (no frontend edits).*
 
 ---
 
@@ -8,16 +8,15 @@
 
 ### Verified working (functionally exercised, not just present)
 
-- **Frontend discovery flow UI (this session):**
-  - **`HomePage` at `/`** — replaces the auth-foundation placeholder with a single persistent page: FRAME 1 company search → FRAME 2 role title → FRAME 3 discovery result. Frame choice is local flow state, not a route.
-  - **FRAME 1:** on-submit `POST /companies/search` via `useMutation` (not live/debounced). Candidate list requires explicit click — never auto-selects, even for a single candidate. Zero candidates **and** search failure both show the same manual name+domain fallback (§7).
-  - **FRAME 2:** confirmation copy (`Searching contacts at {name} ({domain})`) + required `role_title` (still required on `ContactDiscoveryRequest` even though unused by tiering).
-  - **FRAME 3:** contact found (name/title/email, `best_verification_tier`, `confidence_score`, expandable `confidence_breakdown` with all five fields collapsed by default, plain-language `fallback_reason` when present) **or** calm not-found when `contact: null` (not an error state).
-  - **sessionStorage key `discoveryFlow`:** one JSON object `{ company, discoveryResult }`. Company written on lock-in; full `ContactDiscoveryResponse` written on discovery completion (including `contact: null`). Candidate list not persisted. "Start new search" clears key + state. Mount rehydrates directly to FRAME 2 or 3 (lazy `useState` initializer — no FRAME 1 flash).
-  - **Supporting modules:** `discoveryTypes.ts`, `discoveryApi.ts`, `discoverySession.ts` (PII / credit-conservation comments at persistence sites).
-  - **Verified:** `npm run test:run` in `frontend/` — **25 passed** (6 files): prior auth suite (14) + **11** `HomePage` cases covering search success/error, zero-candidate + error-triggered manual fallback, candidate selection, discover success/error/not-found, sessionStorage rehydration to FRAME 2 and FRAME 3, start-new-search clear.
+- **`GET /job-descriptions/{jd_id}` (this session):**
+  - Thin router endpoint, `response_model=JobDescriptionOut`, auth required.
+  - Reuses existing `get_job_description_by_id(db, user, jd_id)` — id+user_id filter confirmed before wiring; no new query logic.
+  - Missing and wrong-owner rows both → `NotFoundError` / 404 (same non-distinguishing pattern as resumes GET-by-id).
+  - Returns current row state including `extracted_data` (null pre-extraction, populated post-extraction) without re-running LLM extraction.
+  - **Verified:** 3 new router tests in `tests/routers/test_job_description.py` — owner happy path (null then populated `extracted_data`), nonexistent id → 404, wrong-owner → 404 (same `user_message` as missing). Full backend suite **120 passed**.
+- **Frontend discovery flow UI (prior session):** three-frame state machine on `/`, TanStack `useMutation` for both POSTs, sessionStorage persistence/rehydration. Frontend: `npm run test:run` → **25 passed** (6 files) — unchanged this session.
 - **Frontend auth foundation (prior session):** apiClient, AuthContext, Login/Signup, ProtectedRoute, TanStack Query root, Vitest wiring.
-- **GENERATED_EMAILS persistence + generation endpoint** — `POST /generated-emails` + `generated_emails.py` orchestrator. Backend suite last verified at **117 passed**.
+- **GENERATED_EMAILS persistence + generation endpoint** — `POST /generated-emails` + `generated_emails.py` orchestrator.
 - **Postgres via Docker Compose** — `docker-compose.yml` at repo root, `postgres:18`.
 - **Alembic migrations** — initial schema + `JOB_DESCRIPTIONS.user_id`; **9 tables**.
 - **Auth (backend)** — signup/login/refresh/logout/me; bcrypt; opaque DB-backed refresh tokens.
@@ -30,7 +29,7 @@
 
 ### Not started
 
-- **Frontend resume/JD upload → extract → generated-email UI** (next slice; accumulates on the same `/` home page).
+- **Frontend resume/JD upload → extract → generated-email UI** (next slice; accumulates on the same `/` home page). Unblocked for JD refetch-by-id by this session's GET route.
 - **Remaining real contact providers** — `ApolloProvider` / `AnymailProvider` deferred.
 - **Refresh-token rotation / reuse-detection**, **cookie-based refresh transport**, **login rate-limiting** — deferred in `OPEN_QUESTIONS.md`.
 
@@ -93,20 +92,21 @@
     - **Server-side logout exists** — `POST /auth/logout` with `{refresh_token}` → 204. `AuthContext.logout` calls it (then always clears localStorage). Not client-only.
     - **Refresh endpoint exists** — `POST /auth/refresh` with `{refresh_token}` → `TokenPairOut`. Intentionally unused on 401 this slice (redirect-to-login only).
     - **401 handler scopes to sent Authorization** — `/auth/login` also returns 401 for bad credentials (`Incorrect email or password`). Shared clear+redirect only runs when a Bearer token was actually attached, so login/signup forms can surface `user_message` without a full-page reload. Documented in `ARCHITECTURE.md` §8.
-40. **Discovery-flow UI sessionStorage key shape (this session):** single key `discoveryFlow` storing `{ company: { name, domain } | null, discoveryResult: ContactDiscoveryResponse | null }` — matches the prompt's specified shape (no deviation). Manual fallback collects both company name and domain (domain alone would leave FRAME 2 confirmation without a display name); name is prefilled from the failed/empty search query when available.
+40. **Discovery-flow UI sessionStorage key shape:** single key `discoveryFlow` storing `{ company: { name, domain } | null, discoveryResult: ContactDiscoveryResponse | null }` — matches the prompt's specified shape (no deviation). Manual fallback collects both company name and domain (domain alone would leave FRAME 2 confirmation without a display name); name is prefilled from the failed/empty search query when available.
+41. **`GET /job-descriptions/{jd_id}` (this session):** no deviations from the prompt. Helper already enforced id+user_id; route is a one-liner reuse. Extract endpoint untouched. `JobDescriptionOut` schema unchanged (`DATA_MODEL.md` §2.3 snippet still omits live `user_id` on the Out model — pre-existing drift from deviation #11, not introduced here).
 
 ---
 
 ## What's next
 
-1. **Frontend resume/JD upload → extract → generated email** on the same persistent `/` home page. Highest remaining risk before the app itself is demoable.
+1. **Frontend resume/JD upload → extract → generated email** on the same persistent `/` home page. Highest remaining risk before the app itself is demoable. JD refetch-by-id is now available server-side.
 2. **Stretch, only if time remains:** Apollo/Anymail, outcome-logging polish, basic analytics view.
 
 ---
 
 ## Doc notes from this session
 
-- **`ARCHITECTURE.md` §8.1:** corrected placeholder-home language — one persistent `/` accumulating frames/sections, not one route per feature. **§8.2.1 / §8.2.2:** documented `useMutation`-over-`useQuery` for the two discovery POSTs, and the sessionStorage persistence layer (what's persisted vs not, PII reasoning, credit-conservation rationale).
-- **`OPEN_QUESTIONS.md`:** "UI-level exposure of `confidence_breakdown`" moved to Resolved — expandable section, all five fields, collapsed by default.
-- **`product_discovery_summary.md`:** Phase 3 frontend status updated — discovery flow done; next slice named (resume/JD upload → extract → generated email).
-- **`DATA_MODEL.md`:** untouched — backend request/response shapes matched the schemas (`CompanySearch*`, `ContactDiscoveryRequest`/`Response`, `ConfidenceBreakdown`); no contract mismatch found. Note: §2.6 still has a stale "Deferred, not decided" sentence about UI exposure of `confidence_breakdown`; the live decision now lives in `OPEN_QUESTIONS.md` Resolved / this UI. Left alone per scope (no schema mismatch).
+- **`OPEN_QUESTIONS.md`:** "JD read-access control" moved from Explicitly deferred → Resolved. States that the new GET reuses `get_job_description_by_id` (no new query logic) and that the wrong-owner test verifies the trigger was honored.
+- **`DATA_MODEL.md` §2.3:** short decision note — GET-by-id exists, why (frontend refetch without re-extract or browser storage of raw text), no schema change.
+- **`ARCHITECTURE.md` / `product_discovery_summary.md`:** untouched — nothing in this slice contradicted what they already say.
+- **`PROGRESS.md`:** overwritten for this slice.

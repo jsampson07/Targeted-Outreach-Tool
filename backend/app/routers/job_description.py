@@ -1,4 +1,4 @@
-"""Job description HTTP endpoints: paste submission + extract (auth required)."""
+"""Job description HTTP endpoints: paste submission, detail, extract (auth required)."""
 
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
@@ -22,6 +22,18 @@ def create_job_description(
 ) -> JobDescriptionOut:
     return job_description_service.create_job_description(
         db, current_user, jd_in
+    )
+
+
+@router.get("/{jd_id}", response_model=JobDescriptionOut)
+def get_job_description(
+    jd_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> JobDescriptionOut:
+    """Fetch one JD by id — ownership-filtered; missing/wrong-owner both 404."""
+    return job_description_service.get_job_description_by_id(
+        db, current_user, jd_id
     )
 
 
