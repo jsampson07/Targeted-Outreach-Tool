@@ -15,9 +15,6 @@ v1 uses free-form selection — the email-generation model picks which 2-3 `Matc
 ### Redis / dedicated cache technology
 Not adopted. Explicit trigger to revisit: a *measured* load test showing Postgres query latency on the `COMPANIES`/`CONTACTS` cache lookup becoming a real bottleneck — not a hypothetical future user count. See `ARCHITECTURE.md` §5.1 for full reasoning.
 
-### UI-level exposure of `confidence_breakdown`
-The schema exposes the full `ConfidenceBreakdown` object through the API (decided). Which subset of fields the frontend actually renders to the user is unresolved — explicitly called out as a UI-copy/design decision to make later, not a backend one.
-
 ### Refresh-token transport (JSON body vs. httpOnly cookie)
 v1 ships refresh tokens as plain JSON in the request/response body — not as an httpOnly cookie. This is a deliberate simplicity choice: cookie storage would pull in `CORSMiddleware(allow_credentials=True)`, SameSite policy, and CSRF-exposure handling that this project's stated differentiators (resilience engineering, data reconciliation, applied LLM eval — see `product_discovery_summary.md`) don't need to spend time on right now. Authorization headers alone do not require credential-mode CORS the way cookies do, so `allow_credentials` stays False/omitted. Stated trigger to revisit: only if this app ever handles data sensitive enough to justify the added complexity, or if XSS risk on the frontend becomes concrete rather than theoretical.
 
@@ -129,4 +126,7 @@ proves too noisy in real use.
 - **Token storage:** `localStorage` for both access and refresh tokens (XSS tradeoff accepted; cross-ref refresh-token-transport deferral above — not re-decided here).
 - **No auto-refresh-on-401:** expired/invalid access → clear tokens + redirect to `/login`. `POST /auth/refresh` exists on the backend but is unused in this path; keeps the first frontend slice small and avoids silent session renewal complexity before feature screens exist.
 - **TanStack Query** at the root for server-state; auth forms stay on Context + imperative `apiClient` calls.
-- **React Router** for public auth routes + `ProtectedRoute`-guarded placeholder home — no serious alternative at this scale.
+- **React Router** for public auth routes + `ProtectedRoute`-guarded home — no serious alternative at this scale.
+
+### UI-level exposure of `confidence_breakdown`
+**Resolved (discovery-flow UI slice):** The discovery result frame renders all five `ConfidenceBreakdown` fields (`verification_tier_score`, `cross_provider_corroboration`, `employment_currency_signal`, `domain_check_passed`, `name_collision_detected`) inside a collapsed-by-default expandable `<details>` section. Inline summary still shows `confidence_score` + `best_verification_tier`; the breakdown is available on demand rather than hidden entirely or reduced to a subset. Schema exposure was already decided; this locks the frontend presentation.

@@ -231,17 +231,37 @@ class CompanySearchResponse(BaseModel):
 
 ### 8.1 Routing
 
-**Decision:** `react-router-dom` (`BrowserRouter`) with public `/login` `/signup` routes and a `ProtectedRoute` wrapper that redirects to `/login` when `!isAuthenticated`. A single placeholder home route (`/`) stands in for feature screens that later slices will replace.
+**Decision:** `react-router-dom` (`BrowserRouter`) with public `/login` `/signup` routes and a `ProtectedRoute` wrapper that redirects to `/login` when `!isAuthenticated`. A single persistent home route (`/`) hosts the product flow — company resolution, contact discovery, and later resume/JD upload + generated email — as accumulating frames/sections on that one page, **not** as one route per feature.
 
-**Reasoning:** At this scale there is no serious alternative worth debating — React Router is the default for React SPAs, and the protected-route pattern matches the JWT-gated backend without inventing a custom gate. Feature screens are deliberately *not* built in the auth-foundation slice so routing stays a thin skeleton.
+**Reasoning:** At this scale there is no serious alternative worth debating — React Router is the default for React SPAs, and the protected-route pattern matches the JWT-gated backend without inventing a custom gate. Flow steps (e.g. search → role title → discovery result) are component state on `/`, not URL segments: deep-linking mid-flow is not a v1 need, and keeping one route avoids inventing a multi-step URL scheme before the later upload/email slices land on the same page.
 
 ### 8.2 Server state: TanStack Query
 
-**Decision:** Wrap the app in `QueryClientProvider` from `@tanstack/react-query` at the root (`main.tsx`), even before the first feature screen makes heavy use of it.
+**Decision:** Wrap the app in `QueryClientProvider` from `@tanstack/react-query` at the root (`main.tsx`). Feature-screen calls that are user-triggered side effects use `useMutation`; auth login/signup stay on Context + imperative `apiClient` calls (form submit, token side effects) rather than being forced through Query.
 
-**Reasoning:** Manual `useEffect` + `useState` per API call duplicates loading/error/retry handling across every data-fetching component — a real maintenance cost once company resolution, discovery, uploads, and email generation all hit the network, not just a style preference. Installing the provider now means later slices opt into `useQuery`/`useMutation` without a second wiring pass. Auth login/signup stay on Context + imperative `apiClient` calls (form submit, token side effects) rather than being forced through Query.
+**Reasoning:** Manual `useEffect` + `useState` per API call duplicates loading/error/retry handling across every data-fetching component — a real maintenance cost once company resolution, discovery, uploads, and email generation all hit the network, not just a style preference. The root provider was installed in the auth-foundation slice so feature screens opt into `useQuery`/`useMutation` without a second wiring pass.
 
-**Alternative considered:** Skip TanStack Query until the first feature screen needs caching. Rejected because the root provider is cheap and the duplicated-boilerplate cost shows up immediately across multiple API-calling screens planned for the next slice.
+**Alternative considered:** Skip TanStack Query until the first feature screen needs caching. Rejected because the root provider is cheap and the duplicated-boilerplate cost shows up immediately across multiple API-calling screens.
+
+### 8.2.1 `useMutation` for company search and contact discovery
+
+**Decision:** `POST /companies/search` and `POST /contacts/discover` are wired with TanStack Query `useMutation`, **not** `useQuery`.
+
+**Reasoning:** Both are side-effecting, user-triggered actions (submit a search; spend discovery credits), not cacheable/refetchable reads. `useQuery` would imply background refetch, stale-while-revalidate, and remount-triggered re-execution — wrong for a Clearbit lookup that should fire once per submit, and actively harmful for discovery, which spends real, rationed provider credits (Hunter: 50/month). Mutation semantics (explicit `mutate`, no automatic refetch) match the product contract.
+
+### 8.2.2 Discovery-flow sessionStorage persistence
+
+**Decision:** Persist discovery flow state in `sessionStorage` under a single namespaced key `discoveryFlow`, storing one JSON object `{ company, discoveryResult }`. Do **not** use `localStorage` for this payload. Do **not** persist the raw company-search candidate list.
+
+**What is persisted:**
+- On successful company lock-in (candidate click or manual domain entry): `{ company: { name, domain }, discoveryResult: null }` — written immediately, before `role_title` is entered, so a refresh during the role-title frame rehydrates there rather than back to company search.
+- On discovery mutation completion (contact found **or** `contact: null` — both are valid completed outcomes): the full `ContactDiscoveryResponse` is written under the same object.
+
+**What is not persisted:** The candidate list from `POST /companies/search`. That call is free (keyless Clearbit) and idempotent; re-running it after a refresh is fine and cheaper than storing ephemeral suggestion UI.
+
+**Why sessionStorage over localStorage:** A discovered contact's name/email is third-party PII, not just the user's own data. `sessionStorage` clears on tab close (bounded exposure); `localStorage` would leave it sitting indefinitely. This is a deliberate choice, not a default.
+
+**Why discovery persistence is a cost/correctness concern:** `POST /contacts/discover` spends real, rationed provider credits. If a refresh silently re-triggered discovery, credits would burn on an accidental reload. Rehydrating the result frame from storage (no re-fetch) prevents that. On mount, the home page reads `discoveryFlow` once via a lazy `useState` initializer and lands directly on the correct frame — no flash of the company-search frame. "Start new search" clears both component state and the `sessionStorage` key.
 
 ### 8.3 API client and shared 401 handling
 
