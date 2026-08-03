@@ -50,6 +50,7 @@ _PASSING_EVAL = EvalResult(
     gates=EvalGates(
         no_unsupported_claims=True,
         correct_contact_name_used=True,
+        no_unprompted_gap_admission=True,
         violation_detail=None,
     ),
     dimensions=EvalDimensions(
@@ -65,6 +66,7 @@ _FAILING_EVAL = EvalResult(
     gates=EvalGates(
         no_unsupported_claims=False,
         correct_contact_name_used=True,
+        no_unprompted_gap_admission=True,
         violation_detail=(
             "Email claims Kubernetes experience, which is listed in "
             "unmatched_jd_requirements."
@@ -75,6 +77,25 @@ _FAILING_EVAL = EvalResult(
         relevance_alignment=2,
         tone_professionalism=4,
         conciseness=3,
+        clear_cta=4,
+    ),
+)
+
+_GAP_ADMISSION_FAILING_EVAL = EvalResult(
+    gates=EvalGates(
+        no_unsupported_claims=True,
+        correct_contact_name_used=True,
+        no_unprompted_gap_admission=False,
+        violation_detail=(
+            "Email proactively admits a Kubernetes experience gap "
+            "relative to the JD."
+        ),
+    ),
+    dimensions=EvalDimensions(
+        role_company_specificity=4,
+        relevance_alignment=3,
+        tone_professionalism=3,
+        conciseness=4,
         clear_cta=4,
     ),
 )
@@ -91,6 +112,7 @@ _SECOND_PASS_EVAL = EvalResult(
     gates=EvalGates(
         no_unsupported_claims=True,
         correct_contact_name_used=True,
+        no_unprompted_gap_admission=True,
         violation_detail=None,
     ),
     dimensions=EvalDimensions(
@@ -262,3 +284,75 @@ def test_evaluate_with_retry_gate_fail_refines_once_and_reevaluates():
     mock_refine.assert_awaited_once()
     assert mock_refine.await_args.args[0] is _EMAIL_DRAFT
     assert mock_refine.await_args.args[1] == feedback
+
+
+def test_evaluate_with_retry_gap_admission_fail_triggers_refine():
+    """Third hard gate failure uses the same silent single-retry path."""
+    llm = _mock_llm()
+    feedback = _GAP_ADMISSION_FAILING_EVAL.gates.violation_detail
+    assert feedback is not None
+
+    with (
+        patch.object(
+            eval_service,
+            "evaluate_email",
+            new=AsyncMock(
+                side_effect=[_GAP_ADMISSION_FAILING_EVAL, _SECOND_PASS_EVAL]
+            ),
+        ) as mock_evaluate,
+        patch.object(
+            eval_service,
+            "refine",
+            new=AsyncMock(return_value=_REFINED_DRAFT),
+        ) as mock_refine,
+    ):
+        email, result = asyncio.run(
+            eval_service.evaluate_with_retry(
+                _EMAIL_DRAFT,
+                _MATCH_DATA,
+                "Jordan Lee",
+                "Engineering Manager",
+                _COMPANY_NAME,
+                _ROLE_TITLE,
+                llm_client=llm,
+            )
+        )
+
+    assert email is _REFINED_DRAFT
+    assert result is _SECOND_PASS_EVAL
+    assert mock_evaluate.await_count == 2
+    mock_refine.assert_awaited_once()
+    assert mock_refine.await_args.args[1] == feedback
+
+
+def test_eval_gates_default_gap_admission_for_legacy_breakdown():
+    """Pre-existing 2-gate JSONB rows deserialize; missing field defaults True."""
+    gates = EvalGates.model_validate(
+        {
+            "no_unsupported_claims": True,
+            "correct_contact_name_used": True,
+            "violation_detail": None,
+        }
+    )
+    assert gates.no_unprompted_gap_admission is True
+
+
+def test_evaluate_email_prompt_includes_gap_admission_gate():
+    llm = _mock_llm(_PASSING_EVAL)
+
+    asyncio.run(
+        eval_service.evaluate_email(
+            _EMAIL_DRAFT,
+            _MATCH_DATA,
+            "Jordan Lee",
+            "Engineering Manager",
+            _COMPANY_NAME,
+            _ROLE_TITLE,
+            llm_client=llm,
+        )
+    )
+
+    prompt = llm.complete.await_args.args[0]
+    assert "no_unprompted_gap_admission" in prompt
+    assert "tone/strategy" in prompt
+    assert "all three gates" in prompt

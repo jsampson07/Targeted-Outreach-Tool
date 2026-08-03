@@ -63,7 +63,7 @@ backend/
 
 `matching.py` is its own file because match/gap analysis is a **comparison between two already-extracted documents**, not a single-document extraction (so it does not belong in `extraction.py`) and not something `eval.py` should be responsible for producing (`eval.py` *consumes* `MatchData` as a verification reference — see `DATA_MODEL.md` §2.7).
 
-`eval.py`'s `evaluate_with_retry` owns the silent single-retry hard-gate orchestration from `product_discovery_summary.md` (evaluate → on gate failure, `refine` once with `violation_detail` → evaluate again → return the second pass either way). `refine(email, feedback) -> EmailDraft` remains the standalone reusable primitive so the deferred v1.1+ interactive multi-turn refinement path is more calls / more triggers / a UI, not a rebuild.
+`eval.py`'s `evaluate_with_retry` owns the silent single-retry hard-gate orchestration from `product_discovery_summary.md` (evaluate → on gate failure, `refine` once with `violation_detail` → evaluate again → return the second pass either way). `gate_passed` / the retry trigger is the AND of **three** Tier 1 booleans (`no_unsupported_claims`, `correct_contact_name_used`, `no_unprompted_gap_admission`) — the third was added after dogfooding; `eval_prompt` instructs the judge to treat gap-admission as a tone/strategy failure distinct from factual unsupported claims. `refine(email, feedback) -> EmailDraft` remains the standalone reusable primitive so the deferred v1.1+ interactive multi-turn refinement path is more calls / more triggers / a UI, not a rebuild.
 
 **Reasoning:** All four call sites share the same underlying shape: prompt in, Pydantic-validated JSON out. This shared shape is already known from the product doc (structured extraction, match analysis, grounded generation, rubric-based judging all follow the same pattern) — it isn't a guess about future needs, which is what would normally argue for waiting. A shared wrapper gives one place to swap models, add retry/timeout/backoff logic, and log token usage/cost across all call sites, and lets tests substitute a fake client (mirroring the `mock.py` provider pattern) instead of monkeypatching HTTP calls in multiple files.
 
@@ -313,7 +313,7 @@ class CompanySearchResponse(BaseModel):
 - **Path/method:** `POST /generated-emails` (router prefix `/generated-emails` + `POST ""`).
 - **Request (`GenerateEmailRequest`):** `{ contact_id, resume_id, job_description_id }` — `contact_id` from Frame 3 discovery result, `resume_id` from `useResumeForGeneration` (public interface unchanged), `job_description_id` from Frame 5 `JobDescriptionOut.id`.
 - **Response (`GeneratedEmailOut`):** `id`, `contact_id`, `resume_id`, `job_description_id`, `subject`, `body`, `eval_score`, `eval_breakdown` (`EvalBreakdownOut`), `match_data` (`MatchData`), **top-level** `gate_passed`, `created_at`.
-- **`eval_breakdown.gates`:** `EvalGatesOut` — `no_unsupported_claims` + `correct_contact_name_used` only. `violation_detail` is stripped at the API boundary on this Out shape (POST and GET-by-id); the client must not fabricate or infer it.
+- **`eval_breakdown.gates`:** `EvalGatesOut` — `no_unsupported_claims` + `correct_contact_name_used` + `no_unprompted_gap_admission` only. `violation_detail` is stripped at the API boundary on this Out shape (POST and GET-by-id); the client must not fabricate or infer it.
 - **`match_data` fields:** `skill_matches`, `experience_alignment`, `unmatched_jd_requirements`, `notable_resume_strengths`, `overall_match_summary` — matches `MatchData` in `DATA_MODEL.md` §2.7.
 - **Company/contact mismatch (422):** `ValidationError` → `{ user_message, error_code }`. Live `user_message`: `"Contact and job description must belong to the same company. Contact is tied to company_id=…; job description is tied to company_id=…."` Frontend surfaces `ApiError.user_message` (and offers Retry on failure before any success).
 
@@ -321,7 +321,7 @@ class CompanySearchResponse(BaseModel):
 - Primary content: `subject` + `body`.
 - **Copy to clipboard:** one action copies paste-ready `"Subject: …\n\n<body>"`. Core to the copy-paste-only product — no send / mailto.
 - **`eval_score`** plus a clear visual indicator when `gate_passed` is false (flagged state) so gate failure is glanceable, not just a bare number.
-- **`eval_breakdown.dimensions`:** the five 1–5 scores; **`eval_breakdown.gates`:** the two booleans only.
+- **`eval_breakdown.dimensions`:** the five 1–5 scores; **`eval_breakdown.gates`:** the three booleans only.
 - **`match_data`:** `overall_match_summary` inline by default; remaining fields inside a collapsed-by-default `<details>` section — mirrors the discovery-frame `confidence_breakdown` precedent (`OPEN_QUESTIONS.md` Resolved → "UI-level exposure of confidence_breakdown").
 
 **Single-shot design:** Once a result exists (successful mutation **or** sessionStorage rehydration), FRAME 6 shows the result only — no Generate button again. A failed attempt (before any success) may show Retry. Regenerating after a successful result is out of scope for v1 — see `OPEN_QUESTIONS.md` Explicitly deferred.

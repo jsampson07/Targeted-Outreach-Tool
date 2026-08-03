@@ -107,6 +107,8 @@ def test_generate_email_prompt_includes_match_and_context():
     assert "Solid Python/API overlap" in prompt  # overall_match_summary
     assert "2-3" in prompt
     assert "resume dump" in prompt
+    assert "Never mention, reference, imply, or acknowledge" in prompt
+    assert "no acknowledgment of what's missing" in prompt
 
 
 def test_generate_email_contact_name_none_uses_fallback_greeting_instructions():

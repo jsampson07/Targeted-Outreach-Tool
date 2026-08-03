@@ -144,6 +144,7 @@ async def generate_and_persist_email(
     gate_passed = (
         eval_result.gates.no_unsupported_claims
         and eval_result.gates.correct_contact_name_used
+        and eval_result.gates.no_unprompted_gap_admission
     )
 
     row = GeneratedEmail(

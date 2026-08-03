@@ -48,6 +48,9 @@ class EvalGates(BaseModel):
 
     no_unsupported_claims: bool
     correct_contact_name_used: bool
+    # Default True so pre-existing eval_breakdown JSONB rows (2-gate era)
+    # still deserialize; those rows keep their original gate_passed value.
+    no_unprompted_gap_admission: bool = True
     violation_detail: str | None = None
 
 
@@ -56,6 +59,7 @@ class EvalGatesOut(BaseModel):
 
     no_unsupported_claims: bool
     correct_contact_name_used: bool
+    no_unprompted_gap_admission: bool = True
 
 
 class EvalDimensions(BaseModel):

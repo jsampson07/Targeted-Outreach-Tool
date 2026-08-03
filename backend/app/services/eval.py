@@ -80,7 +80,11 @@ async def evaluate_with_retry(
         llm_client=client,
     )
     gates = eval_result.gates
-    if gates.no_unsupported_claims and gates.correct_contact_name_used:
+    if (
+        gates.no_unsupported_claims
+        and gates.correct_contact_name_used
+        and gates.no_unprompted_gap_admission
+    ):
         return email, eval_result
 
     # violation_detail is required by the judge prompt when a gate fails;

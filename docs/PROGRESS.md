@@ -1,6 +1,6 @@
 # Progress Snapshot
 
-*Overwritten each session, not appended to. Reflects verified state as of the session ending 2026-08-03 — wire MockProvider live-path to DEV_SCRIPTED_RESULTS + show `fallback_reason` on FRAME 3 not-found. Frontend: `npm run test:run` (HomePage not-found assertion updated). Backend: factory wiring only; MockProvider bare-default behavior unchanged.*
+*Overwritten each session, not appended to. Reflects verified state as of the session ending 2026-08-03 — third hard gate `no_unprompted_gap_admission` + tightened generation prompt after real dogfooding.*
 
 ---
 
@@ -8,10 +8,11 @@
 
 ### Verified working (functionally exercised, not just present)
 
-- **Live mock-mode discovery fixtures (this session):**
-  - Root cause: `contact_discovery.py`'s `_build_providers()` constructed bare `MockProvider()` when `CONTACT_PROVIDER=mock`, so every manual/live discovery call returned zero candidates for every domain regardless of tier. Service tests never caught it — they inject their own scripted `MockProvider` instances and bypass the factory.
-  - Fix: `app/providers/mock_fixtures.py` defines `DEV_SCRIPTED_RESULTS` (`acme.com` tier-1 verified, `globex.com` pattern-guessed hiring-manager after empty earlier tiers, `empty.co` all-tiers empty). Factory passes `scripted=DEV_SCRIPTED_RESULTS`. Bare `MockProvider()` default left unchanged for tests/unscripted domains.
-  - Frontend: FRAME 3 not-found branch now renders `discoveryResult.fallback_reason` (same `role="status"` pattern as the found branch) — that field explains exhausted tiers and was previously invisible exactly when most useful.
+- **Third eval hard gate — no unprompted gap admission (this session):**
+  - **Root cause (found via manual end-to-end demo, not tests):** A real dogfooding run produced a cold email that volunteered an experience gap ("…areas where I don't yet have direct experience"). Factually accurate → passed `no_unsupported_claims`; bad outreach strategy → no existing dimension caught it. All existing eval tests use a fake LLM client and could not have surfaced this LLM behavior issue.
+  - **Fix:** (1) `EvalGates` / `EvalGatesOut.no_unprompted_gap_admission: bool = True` — default so pre-existing 2-gate `eval_breakdown` JSONB rows still deserialize; those rows keep their originally computed `gate_passed` (not retroactively recomputed). Shared `violation_detail` unchanged. (2) `eval_prompt` judge instructions for the tone/strategy gate. (3) `evaluate_with_retry` + `generated_emails.gate_passed` now AND three booleans. (4) Generation prompt: never mention/reference/imply/acknowledge `unmatched_jd_requirements`. (5) FRAME 6 hard-gates `<dl>` third row.
+  - Backend + frontend tests extended for pass + refine-on-fail + UI Pass/Fail rendering.
+- **Live mock-mode discovery fixtures (prior session):** `DEV_SCRIPTED_RESULTS` wired at factory; FRAME 3 shows `fallback_reason`.
 - **Frontend generate-email UI / FRAME 6 (prior session):** Generate Email mutation, result display, sessionStorage `generatedEmail`, single-shot.
 - **Frontend resume + JD upload/extract UI (prior session):** FRAME 4–5, `useResumeForGeneration`, sessionStorage `resume` / `jobDescription`.
 - **`GET /generated-emails/{generated_email_id}` (prior session):** join-based ownership + `EvalBreakdownOut` stripping `violation_detail`.
@@ -26,7 +27,7 @@
 
 ### Present, but not yet exercised by anything
 
-- **`POST /contacts/discover` HTTP path** — mounted; no dedicated router TestClient suite (covered at service layer + Hunter unit tests). Frontend now calls it; live mock path now returns scripted fixtures (this session). Backend HTTP-layer test gap unchanged.
+- **`POST /contacts/discover` HTTP path** — mounted; no dedicated router TestClient suite (covered at service layer + Hunter unit tests). Frontend now calls it; live mock path returns scripted fixtures. Backend HTTP-layer test gap unchanged.
 - **`POST /auth/refresh`** — backend exists; frontend does **not** call it on 401 (scoped: redirect-to-login only).
 - **`GET /job-descriptions/{jd_id}` / `GET /resumes/{id}` / `GET /generated-emails/{id}`** — available for refetch-by-id; this slice rehydrates paid results from sessionStorage instead.
 
@@ -87,7 +88,7 @@
 29. **`EvalGates.violation_detail` added after the original schema lock.** Free-form `str | None` (not a fixed violation-type enum), populated only when a Tier 1 gate fails, solely to feed `refine()`'s feedback argument. Not persisted independently (rides inside `eval_breakdown` JSONB). **Client exclusion now enforced** via `EvalGatesOut` / `EvalBreakdownOut` on `GeneratedEmailOut`.
 30. **`EmailDraft` is a non-persisted schema** (`subject` + `body`) for generation/refine LLM I/O. Separate from `GeneratedEmailOut` so ephemeral draft shapes aren't conflated with the persisted API response.
 31. **`generate_email` / `evaluate_email` take explicit primitives** (`contact_name`, `contact_title`, `company_name`, `role_title` as needed) plus `MatchData` / `EmailDraft` — not ORM/DB objects, no DB session. Ownership/loading lives in `generated_emails.py`.
-32. **`evaluate_with_retry` owns gate-retry orchestration inside `eval.py`**, not a separate module and not the router. `refine` stays the standalone reusable primitive for the product doc's v1.1+ multi-turn path. On gate failure with a missing `violation_detail`, a short fallback feedback string is used so `refine` always receives `str`.
+32. **`evaluate_with_retry` owns gate-retry orchestration inside `eval.py`**, not a separate module and not the router. `refine` stays the standalone reusable primitive for the product doc's v1.1+ multi-turn path. On gate failure with a missing `violation_detail`, a short fallback feedback string is used so `refine` always receives `str`. Gate check is now AND of **three** booleans (see #46).
 33. **`contact_name=None` fallback handling is explicit in both prompts:** generation instructs a generic professional greeting and forbids fabricating a name; eval treats that generic greeting as a pass for `correct_contact_name_used` when `contact_name` is null.
 34. **`eval_prompt` / `evaluate_email` / `evaluate_with_retry` gained `company_name` + `role_title` before commit.** Gap in the original task spec (generation already had them; eval didn't) — caught in review, not a Cursor deviation. Needed so `role_company_specificity` grades accuracy against trusted DB ground truth. `refine()` deliberately left unchanged (`email` + `feedback` only).
 35. **`app/services/generated_emails.py` is a separate orchestrating service from `email_generation.py`.** `email_generation.py` stays a pure LLM call site (primitives in → `EmailDraft` out, no DB) per ARCHITECTURE.md §3's four-LLM-services table. Persistence, ownership checks, company consistency, score aggregation, and insert live in `generated_emails.py` — same "thick service, thin router" pattern as `contact_discovery.py`. Not a fifth LLM call site; §3's table is unchanged.
@@ -108,24 +109,28 @@
     - **Paths:** `POST /resumes`, `POST /resumes/{id}/extract`, `POST /job-descriptions`, `POST /job-descriptions/{jd_id}/extract`, `GET /job-descriptions/{jd_id}` — match live `main.py` prefixes.
     - **`company_id` is not on Frame 1's locked company** — only on found `ContactOut`. Contact-null discovery cannot continue to JD without a backend change; UI gates Continue accordingly.
 44. **Generate-email frontend slice (prior session) — Step 0 contract vs docs:**
-    - **No schema/contract gap vs `DATA_MODEL.md` §2.7.** Live `GenerateEmailRequest` / `GeneratedEmailOut` / `EvalGatesOut` / `MatchData` match the documented shapes. `gate_passed` is top-level. `EvalGatesOut` omits `violation_detail` on the POST response (same Out model as GET-by-id). `DATA_MODEL.md` left untouched.
+    - **No schema/contract gap vs `DATA_MODEL.md` §2.7 at ship time** (two gates). Live shapes now include the third gate (this session) — docs updated.
     - **Path:** `POST /generated-emails` confirmed via `main.py` prefix + router `POST ""`.
     - **422 mismatch `user_message`:** `"Contact and job description must belong to the same company. Contact is tied to company_id=…; job description is tied to company_id=…."` — frontend surfaces via `ApiError.user_message`.
     - **Backend files live under `backend/app/…`** (monorepo layout); prompt paths `app/routers/…` resolve there.
-45. **Live mock-mode factory gap (this session — bug fix / deviation from Phase 0 intent):** Until this fix, `_build_providers()` used bare `MockProvider()` under `CONTACT_PROVIDER=mock`, so the live HTTP path never returned a found contact despite orchestration being validated at the service-test level with scripted providers. Phase 0's "mock/fixture provider simulating realistic scenarios" was only true for tests, not for manual/dev UI runs. Fixed by wiring `DEV_SCRIPTED_RESULTS` at the factory; documented in `ARCHITECTURE.md` §4.5. Not a schema change.
+45. **Live mock-mode factory gap (prior session — bug fix):** `_build_providers()` now wires `DEV_SCRIPTED_RESULTS` under `CONTACT_PROVIDER=mock`. Documented in `ARCHITECTURE.md` §4.5.
+46. **Third hard gate `no_unprompted_gap_admission` (this session — post-lock revision):** Added with default `True` for JSONB backward compat. `gate_passed` / `evaluate_with_retry` AND three booleans. Generation prompt tightened from "don't claim unmatched as strengths" to "never mention/reference/imply/acknowledge." Docs: `product_discovery_summary.md` Tier 1, `DATA_MODEL.md` §2.7 Decision (revision), `ARCHITECTURE.md` §3 + §8.2.4, `OPEN_QUESTIONS.md` default-value + calibration note.
 
 ---
 
 ## What's next
 
-1. **Stretch — outcome logging** (OUTCOMES: sent / no-response / replied / interview) once the demo loop has been exercised in a real job search.
-2. **Stretch — basic analytics view** (Phase 4).
-3. **Deferred providers / auth hardening** as listed under Not started / `OPEN_QUESTIONS.md` — only if real usage demands them.
+1. **Manual spot-check calibration** of the new gap-admission gate against a few real generated emails (same caution as the original rubric).
+2. **Stretch — outcome logging** (OUTCOMES: sent / no-response / replied / interview) once the demo loop has been exercised in a real job search.
+3. **Stretch — basic analytics view** (Phase 4).
+4. **Deferred providers / auth hardening** as listed under Not started / `OPEN_QUESTIONS.md` — only if real usage demands them.
 
 ---
 
 ## Doc notes from this session
 
-- **`ARCHITECTURE.md`:** new §4.5 documenting `DEV_SCRIPTED_RESULTS` domains (`acme.com` / `globex.com` / `empty.co`) and how to exercise each scenario via FRAME 1 manual domain entry.
-- **`PROGRESS.md`:** overwritten for this bugfix.
-- **`DATA_MODEL.md` / `product_discovery_summary.md` / `OPEN_QUESTIONS.md`:** untouched — no schema, scope, or new open design question.
+- **`product_discovery_summary.md`:** Tier 1 now lists three hard gates; notes dogfooding origin.
+- **`DATA_MODEL.md` §2.7:** `no_unprompted_gap_admission` + Decision (revision); generation disallow-list wording tightened.
+- **`ARCHITECTURE.md`:** `evaluate_with_retry` three-gate AND; `eval_prompt` note; FRAME 6 gates list updated.
+- **`OPEN_QUESTIONS.md`:** default-value backward-compat decision + calibration caution; `eval_score` / `violation_detail` wording updated for three gates.
+- **`PROGRESS.md`:** overwritten for this fix.
