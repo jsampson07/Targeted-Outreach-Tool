@@ -91,6 +91,8 @@ class JDExtraction(BaseModel):
     seniority_level: str | None
 ```
 
+**Decision:** A GET-by-id route now exists — `GET /job-descriptions/{jd_id}` → `JobDescriptionOut` (no schema change; the response shape already covered both pre- and post-extraction state via `extracted_data: JDExtraction | None`). Added to unblock frontend refetch-by-id after upload without either re-running paid `POST …/extract` or persisting raw JD text in browser storage. Ownership filtering reuses the existing `get_job_description_by_id` helper (id+user_id); see `OPEN_QUESTIONS.md` Resolved "JD read-access control".
+
 ### 2.4 COMPANIES
 
 ```python

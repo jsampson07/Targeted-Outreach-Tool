@@ -163,3 +163,88 @@ def test_two_users_same_company_create_distinct_rows(
         alice_body["user_id"],
         bob_body["user_id"],
     }
+
+
+def test_get_own_job_description_happy_path(
+    client: TestClient, db_session: Session, company: Company
+):
+    headers = _auth_headers(client, "jd-owner-get@example.com")
+    create = client.post(
+        "/job-descriptions",
+        headers=headers,
+        json={
+            "company_id": company.id,
+            "role_title": "Software Engineer",
+            "raw_text": "Build APIs and ship features with Python.",
+        },
+    )
+    assert create.status_code == 201
+    jd_id = create.json()["id"]
+
+    # Before extraction: extracted_data is null
+    unextracted = client.get(f"/job-descriptions/{jd_id}", headers=headers)
+    assert unextracted.status_code == 200
+    body = unextracted.json()
+    assert body["id"] == jd_id
+    assert body["company_id"] == company.id
+    assert body["role_title"] == "Software Engineer"
+    assert body["raw_text"] == "Build APIs and ship features with Python."
+    assert body["extracted_data"] is None
+    assert "created_at" in body
+    assert "user_id" in body
+
+    # After extraction data is persisted: GET returns it without re-running LLM
+    populated = {
+        "required_skills": ["Python", "SQL"],
+        "responsibilities": ["Build APIs"],
+        "seniority_level": "mid",
+    }
+    row = (
+        db_session.query(JobDescription)
+        .filter(JobDescription.id == jd_id)
+        .first()
+    )
+    assert row is not None
+    row.extracted_data = populated
+    db_session.commit()
+
+    extracted = client.get(f"/job-descriptions/{jd_id}", headers=headers)
+    assert extracted.status_code == 200
+    assert extracted.json()["extracted_data"] == populated
+
+
+def test_get_job_description_nonexistent_is_404(client: TestClient):
+    headers = _auth_headers(client, "jd-missing-get@example.com")
+    response = client.get("/job-descriptions/999999999", headers=headers)
+    assert response.status_code == 404
+    assert response.json()["error_code"] == "NotFoundError"
+
+
+def test_get_job_description_other_users_is_404(
+    client: TestClient, company: Company
+):
+    alice_headers = _auth_headers(client, "alice-jd-get@example.com")
+    bob_headers = _auth_headers(client, "bob-jd-get@example.com")
+
+    create = client.post(
+        "/job-descriptions",
+        headers=alice_headers,
+        json={
+            "company_id": company.id,
+            "role_title": "Engineer",
+            "raw_text": "Alice's private job description posting text.",
+        },
+    )
+    assert create.status_code == 201
+    alice_jd_id = create.json()["id"]
+
+    other_users = client.get(
+        f"/job-descriptions/{alice_jd_id}", headers=bob_headers
+    )
+    missing = client.get("/job-descriptions/999999999", headers=bob_headers)
+
+    assert other_users.status_code == 404
+    assert missing.status_code == 404
+    assert other_users.json()["error_code"] == "NotFoundError"
+    assert missing.json()["error_code"] == "NotFoundError"
+    assert other_users.json()["user_message"] == missing.json()["user_message"]

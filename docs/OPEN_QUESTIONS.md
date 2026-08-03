@@ -33,9 +33,6 @@ Not implemented. Every JD submission creates a new row, even if the underlying p
 
 HunterProvider fetches at most 100 emails per domain (limit=100, no pagination — see PROGRESS.md Deviations #25) and does not log when a domain actually has more on file, so results are silently truncated past that cap. Deferred as low-risk for a v1 aimed at typical small/mid-size target companies. Stated trigger to revisit: before running live-key checkpoint validation against a large company, or immediately if a real search returns suspiciously few or unexpected candidates.
 
-### JD read-access control
-JOB_DESCRIPTIONS has user_id. There is still no GET-by-id list/detail route, but `POST /job-descriptions/{jd_id}/extract` returns `JobDescriptionOut` (including `raw_text`) and already filters on id AND user_id together via `get_job_description_by_id` (same ownership pattern as resumes — wrong owner → 404). Stated trigger to revisit: the moment any GET route is added that reads JOB_DESCRIPTIONS, it must use that same id+user_id filter, not return rows to any authenticated caller regardless of ownership.
-
 ### Stubbed during the first discovery-pipeline build (defaulted, not designed)
 - **Name-collision resolution**: detection is real; resolution is highest-tier-wins,
   first-returned as tiebreak. Revisit once real multi-candidate collisions are observed.
@@ -130,3 +127,6 @@ proves too noisy in real use.
 
 ### UI-level exposure of `confidence_breakdown`
 **Resolved (discovery-flow UI slice):** The discovery result frame renders all five `ConfidenceBreakdown` fields (`verification_tier_score`, `cross_provider_corroboration`, `employment_currency_signal`, `domain_check_passed`, `name_collision_detected`) inside a collapsed-by-default expandable `<details>` section. Inline summary still shows `confidence_score` + `best_verification_tier`; the breakdown is available on demand rather than hidden entirely or reduced to a subset. Schema exposure was already decided; this locks the frontend presentation.
+
+### JD read-access control
+**Resolved (JOB_DESCRIPTIONS GET-by-id slice):** `GET /job-descriptions/{jd_id}` now exists and returns `JobDescriptionOut`. It reuses the existing ownership-filtered helper `get_job_description_by_id(db, user, jd_id)` — the same id+user_id filter already used by `POST …/extract` and by `generated_emails.py` — rather than introducing new query logic. Missing and wrong-owner rows both raise `NotFoundError` (non-distinguishing 404), matching the resumes GET-by-id pattern. The wrong-owner router test case is what verifies the original trigger condition was actually honored, not just assumed from the helper's docstring.
