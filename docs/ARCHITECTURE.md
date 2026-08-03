@@ -146,6 +146,22 @@ class ProviderSearchResult(BaseModel):
 
 **This design is what makes mock-first development real, not a workaround.** Because `MockProvider` implements the exact same ABC and returns the exact same `ProviderSearchResult` shape as the real providers, `contact_discovery.py` genuinely cannot tell mock from real — it's a full peer implementation, not a stub with a different shape to swap out later.
 
+### 4.5 Dev fixtures for live mock mode
+
+**Decision:** When `CONTACT_PROVIDER=mock`, the discovery router factory (`_build_providers` in `app/routers/contact_discovery.py`) constructs `MockProvider(scripted=DEV_SCRIPTED_RESULTS)`, not a bare `MockProvider()`. The scripted map lives in `app/providers/mock_fixtures.py`. Bare `MockProvider()` (empty default for unscripted domains) remains correct for unit tests that inject their own scripts.
+
+**Why a separate fixtures module:** Service-level tests already pass per-test `scripted=` maps and never exercise the router factory. Without wiring fixtures at the factory, every manual/live discovery call under mock mode returned zero candidates for every domain — contradicting Phase 0's locked "mock/fixture provider simulating realistic scenarios" strategy.
+
+**Manual testing domains** (fictional; Clearbit often won't suggest them — use FRAME 1's manual name+domain fallback):
+
+| Domain | Scenario |
+|---|---|
+| `acme.com` | Tier-1 verified recruiter hit. `tier_used=recruiter`, no `fallback_reason`, high confidence. |
+| `globex.com` | Empty recruiter + talent-acquisition tiers, then a pattern-guessed hiring-manager hit. Exercises `fallback_reason` + lower `best_verification_tier`. |
+| `empty.co` | All four tiers empty on purpose. `contact=null` with the exhausted-tiers `fallback_reason` (not-found path). |
+
+Any other domain still gets the bare default (successful empty candidates) unless added to `DEV_SCRIPTED_RESULTS`. After a successful find, Postgres cache (§5) may short-circuit a re-search for that domain until the contact row is cleared.
+
 ---
 
 ## 5. Caching Strategy

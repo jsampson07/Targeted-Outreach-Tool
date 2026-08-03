@@ -67,7 +67,8 @@ const sampleContact: ContactDiscoveryResponse = {
 
 const notFoundResult: ContactDiscoveryResponse = {
   contact: null,
-  fallback_reason: null,
+  fallback_reason:
+    'No contact could be found for this company across any tier.',
   tier_used: null,
 }
 
@@ -270,7 +271,14 @@ describe('HomePage discovery flow', () => {
     await user.click(screen.getByRole('button', { name: /find contact/i }))
 
     expect(
-      await screen.findByText(/no contact could be found for this company/i),
+      await screen.findByText(
+        /no contact could be found for this company right now/i,
+      ),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        /no contact could be found for this company across any tier/i,
+      ),
     ).toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(
