@@ -231,9 +231,9 @@ class CompanySearchResponse(BaseModel):
 
 ### 8.1 Routing
 
-**Decision:** `react-router-dom` (`BrowserRouter`) with public `/login` `/signup` routes and a `ProtectedRoute` wrapper that redirects to `/login` when `!isAuthenticated`. A single persistent home route (`/`) hosts the product flow — company resolution, contact discovery, resume/JD upload+extract, and later generated email — as accumulating frames/sections on that one page, **not** as one route per feature.
+**Decision:** `react-router-dom` (`BrowserRouter`) with public `/login` `/signup` routes and a `ProtectedRoute` wrapper that redirects to `/login` when `!isAuthenticated`. A single persistent home route (`/`) hosts the product flow — company resolution, contact discovery, resume/JD upload+extract, and generated email — as accumulating frames/sections on that one page, **not** as one route per feature.
 
-**Reasoning:** At this scale there is no serious alternative worth debating — React Router is the default for React SPAs, and the protected-route pattern matches the JWT-gated backend without inventing a custom gate. Flow steps (search → role title → discovery → resume → JD → …) are component state on `/`, not URL segments: deep-linking mid-flow is not a v1 need, and keeping one route avoids inventing a multi-step URL scheme before the generate-email slice lands on the same page.
+**Reasoning:** At this scale there is no serious alternative worth debating — React Router is the default for React SPAs, and the protected-route pattern matches the JWT-gated backend without inventing a custom gate. Flow steps (search → role title → discovery → resume → JD → generate email) are component state on `/`, not URL segments: deep-linking mid-flow is not a v1 need, and keeping one route avoids inventing a multi-step URL scheme for a linear demo flow.
 
 ### 8.2 Server state: TanStack Query
 
@@ -243,20 +243,21 @@ class CompanySearchResponse(BaseModel):
 
 **Alternative considered:** Skip TanStack Query until the first feature screen needs caching. Rejected because the root provider is cheap and the duplicated-boilerplate cost shows up immediately across multiple API-calling screens.
 
-### 8.2.1 `useMutation` for company search, contact discovery, and document extract
+### 8.2.1 `useMutation` for company search, contact discovery, document extract, and email generation
 
-**Decision:** `POST /companies/search`, `POST /contacts/discover`, resume upload+extract, and JD create+extract are wired with TanStack Query `useMutation`, **not** `useQuery`.
+**Decision:** `POST /companies/search`, `POST /contacts/discover`, resume upload+extract, JD create+extract, and `POST /generated-emails` are wired with TanStack Query `useMutation`, **not** `useQuery`.
 
-**Reasoning:** These are side-effecting, user-triggered actions (submit a search; spend discovery credits; spend LLM extract credits), not cacheable/refetchable reads. `useQuery` would imply background refetch, stale-while-revalidate, and remount-triggered re-execution — wrong for a Clearbit lookup that should fire once per submit, and actively harmful for discovery/extract, which spend real, rationed credits. Mutation semantics (explicit `mutate`, no automatic refetch) match the product contract.
+**Reasoning:** These are side-effecting, user-triggered actions (submit a search; spend discovery credits; spend LLM extract/generate credits), not cacheable/refetchable reads. `useQuery` would imply background refetch, stale-while-revalidate, and remount-triggered re-execution — wrong for a Clearbit lookup that should fire once per submit, and actively harmful for discovery/extract/generate, which spend real, rationed credits. Mutation semantics (explicit `mutate`, no automatic refetch) match the product contract.
 
 ### 8.2.2 Discovery-flow sessionStorage persistence
 
-**Decision:** Persist home-page flow state in `sessionStorage` under a single namespaced key `discoveryFlow`, storing one JSON object `{ company, discoveryResult, resume, jobDescription }`. Do **not** use `localStorage` for this payload. Do **not** persist the raw company-search candidate list. Document fields were added to this same key (not a sibling) so "Start new search" and rehydration stay one clear/one read — see §8.2.3 for the document-field extension.
+**Decision:** Persist home-page flow state in `sessionStorage` under a single namespaced key `discoveryFlow`, storing one JSON object `{ company, discoveryResult, resume, jobDescription, generatedEmail }`. Do **not** use `localStorage` for this payload. Do **not** persist the raw company-search candidate list. Document and email fields were added to this same key (not a sibling) so "Start new search" and rehydration stay one clear/one read — see §8.2.3–§8.2.4.
 
 **What is persisted:**
-- On successful company lock-in (candidate click or manual domain entry): `{ company: { name, domain }, discoveryResult: null, resume: null, jobDescription: null }` — written immediately, before `role_title` is entered, so a refresh during the role-title frame rehydrates there rather than back to company search.
-- On discovery mutation completion (contact found **or** `contact: null` — both are valid completed outcomes): the full `ContactDiscoveryResponse` is written under the same object; document fields are cleared (new discovery starts a new pipeline).
+- On successful company lock-in (candidate click or manual domain entry): `{ company: { name, domain }, discoveryResult: null, resume: null, jobDescription: null, generatedEmail: null }` — written immediately, before `role_title` is entered, so a refresh during the role-title frame rehydrates there rather than back to company search.
+- On discovery mutation completion (contact found **or** `contact: null` — both are valid completed outcomes): the full `ContactDiscoveryResponse` is written under the same object; document/email fields are cleared (new discovery starts a new pipeline).
 - On successful resume/JD extract: the post-extract `ResumeOut` / `JobDescriptionOut` objects are written under `resume` / `jobDescription` (see §8.2.3).
+- On successful email generation: the full `GeneratedEmailOut` is written under `generatedEmail` (see §8.2.4).
 
 **What is not persisted:** The candidate list from `POST /companies/search`. That call is free (keyless Clearbit) and idempotent; re-running it after a refresh is fine and cheaper than storing ephemeral suggestion UI.
 
@@ -266,9 +267,9 @@ class CompanySearchResponse(BaseModel):
 
 ### 8.2.3 Resume + JD upload/extract frames (FRAME 4–5)
 
-**Decision:** After contact discovery (FRAME 3), the same `/` page continues with two more exclusive frames — resume upload+extract, then JD paste+extract — before the generate-email step (separate slice). No new routes.
+**Decision:** After contact discovery (FRAME 3), the same `/` page continues with resume upload+extract, then JD paste+extract, then generate-email (FRAME 6 — see §8.2.4). No new routes.
 
-**Frame order (locked for this slice):** FRAME 1 company search → FRAME 2 role title → FRAME 3 discovery result → FRAME 4 resume → FRAME 5 JD. Resume stays before JD: resume creation does not need `company_id`, and JD creation does. Ordering JD first would not make `company_id` available any earlier — see below.
+**Frame order (locked):** FRAME 1 company search → FRAME 2 role title → FRAME 3 discovery result → FRAME 4 resume → FRAME 5 JD → FRAME 6 generate email. Resume stays before JD: resume creation does not need `company_id`, and JD creation does. Ordering JD first would not make `company_id` available any earlier — see below.
 
 **Backend contracts verified against routers/services (not docs alone):**
 - **Resume create:** `POST /resumes` is **multipart** with form field `file` (PDF/DOCX). Server parses via pypdf/python-docx into `raw_text`, then persists. Not a JSON `ResumeCreate{raw_text}` body — that Pydantic model is an internal post-parse shape only.
@@ -284,7 +285,32 @@ class CompanySearchResponse(BaseModel):
 
 **JD step:** paste `raw_text` + `role_title` (collected on FRAME 5, not reused from the discovery role-title field), `company_id` from the contact; `useMutation` for create+extract. Displays `JDExtraction` (`required_skills`, `responsibilities`, `seniority_level`).
 
-**sessionStorage extension:** Added `resume` and `jobDescription` fields on the existing `discoveryFlow` object (not a sibling key). Same third-party-PII / paid-action reasoning as discovery: extract endpoints spend LLM credits; refresh must rehydrate the confirmation UI without re-calling `/extract`. Full post-extract Out objects are stored (mirrors storing full `ContactDiscoveryResponse`). `GET /job-descriptions/{id}` remains available if a later slice prefers id-only storage + refetch.
+**sessionStorage extension:** Added `resume` and `jobDescription` fields on the existing `discoveryFlow` object (not a sibling key). Same third-party-PII / paid-action reasoning as discovery: extract endpoints spend LLM credits; refresh must rehydrate the confirmation UI without re-calling `/extract`. Full post-extract Out objects are stored (mirrors storing full `ContactDiscoveryResponse`). `GET /job-descriptions/{id}` remains available if a later slice prefers id-only storage + refetch. FRAME 6 extends the same key with `generatedEmail` — see §8.2.4.
+
+### 8.2.4 Generate-email frame (FRAME 6)
+
+**Decision:** After FRAME 5's JD `extracted_data` is non-null (and the user continues), the same `/` page shows FRAME 6 — an explicit **Generate Email** button wired with `useMutation` (not auto-fired on frame entry). Contact existence is already guaranteed by this point: JD creation required a non-null contact's `company_id`. No new routes. No `mailto:` / send affordance — copy-paste only.
+
+**Trigger condition:** FRAME 5 confirmation after successful JD extract (`extracted_data != null`), then an explicit continue into FRAME 6. Generation itself is a second explicit click — same credit-conscious pattern as discovery/extract.
+
+**Backend contract verified against `backend/app/routers/generated_emails.py` + `backend/app/schemas/generated_email.py` (not docs alone):**
+- **Path/method:** `POST /generated-emails` (router prefix `/generated-emails` + `POST ""`).
+- **Request (`GenerateEmailRequest`):** `{ contact_id, resume_id, job_description_id }` — `contact_id` from Frame 3 discovery result, `resume_id` from `useResumeForGeneration` (public interface unchanged), `job_description_id` from Frame 5 `JobDescriptionOut.id`.
+- **Response (`GeneratedEmailOut`):** `id`, `contact_id`, `resume_id`, `job_description_id`, `subject`, `body`, `eval_score`, `eval_breakdown` (`EvalBreakdownOut`), `match_data` (`MatchData`), **top-level** `gate_passed`, `created_at`.
+- **`eval_breakdown.gates`:** `EvalGatesOut` — `no_unsupported_claims` + `correct_contact_name_used` only. `violation_detail` is stripped at the API boundary on this Out shape (POST and GET-by-id); the client must not fabricate or infer it.
+- **`match_data` fields:** `skill_matches`, `experience_alignment`, `unmatched_jd_requirements`, `notable_resume_strengths`, `overall_match_summary` — matches `MatchData` in `DATA_MODEL.md` §2.7.
+- **Company/contact mismatch (422):** `ValidationError` → `{ user_message, error_code }`. Live `user_message`: `"Contact and job description must belong to the same company. Contact is tied to company_id=…; job description is tied to company_id=…."` Frontend surfaces `ApiError.user_message` (and offers Retry on failure before any success).
+
+**Result display:**
+- Primary content: `subject` + `body`.
+- **Copy to clipboard:** one action copies paste-ready `"Subject: …\n\n<body>"`. Core to the copy-paste-only product — no send / mailto.
+- **`eval_score`** plus a clear visual indicator when `gate_passed` is false (flagged state) so gate failure is glanceable, not just a bare number.
+- **`eval_breakdown.dimensions`:** the five 1–5 scores; **`eval_breakdown.gates`:** the two booleans only.
+- **`match_data`:** `overall_match_summary` inline by default; remaining fields inside a collapsed-by-default `<details>` section — mirrors the discovery-frame `confidence_breakdown` precedent (`OPEN_QUESTIONS.md` Resolved → "UI-level exposure of confidence_breakdown").
+
+**Single-shot design:** Once a result exists (successful mutation **or** sessionStorage rehydration), FRAME 6 shows the result only — no Generate button again. A failed attempt (before any success) may show Retry. Regenerating after a successful result is out of scope for v1 — see `OPEN_QUESTIONS.md` Explicitly deferred.
+
+**sessionStorage extension:** Added `generatedEmail: GeneratedEmailOut | null` on the existing `discoveryFlow` key (not a sibling). Same paid-call rehydration reasoning as resume/JD (§8.2.2–§8.2.3): generation spends LLM credits (match + generate + eval, possibly silent internal retry); refresh must not re-call `POST /generated-emails`.
 
 ### 8.3 API client and shared 401 handling
 

@@ -1,6 +1,7 @@
 import { useMutation } from '@tanstack/react-query'
 import { useState, type FormEvent } from 'react'
 
+import { GeneratedEmailStep } from '../components/GeneratedEmailStep'
 import { JobDescriptionStep } from '../components/JobDescriptionStep'
 import { ResumeStep } from '../components/ResumeStep'
 import { useAuth } from '../context/AuthContext'
@@ -12,6 +13,7 @@ import {
   readDiscoveryFlow,
   writeCompanyLock,
   writeDiscoveryResult,
+  writeGeneratedEmailResult,
   writeJobDescriptionResult,
   writeResumeResult,
 } from '../lib/discoverySession'
@@ -22,28 +24,40 @@ import type {
   LockedCompany,
 } from '../lib/discoveryTypes'
 import type { JobDescriptionOut } from '../lib/documentTypes'
+import type { GeneratedEmailOut } from '../lib/generatedEmailTypes'
 
-type Frame = 1 | 2 | 3 | 4 | 5
+type Frame = 1 | 2 | 3 | 4 | 5 | 6
 
 /**
  * Map persisted + in-memory flow flags to the single visible frame.
- * pastDiscovery / pastResume are explicit continues (not inferred from ids)
- * so successful extract still shows a confirmation before advancing.
+ * pastDiscovery / pastResume / pastJd are explicit continues (not inferred
+ * from ids) so successful extract/generate still shows a confirmation before
+ * advancing — except rehydrate skips ahead when later results already exist.
  */
 function frameFromState(args: {
   company: LockedCompany | null
   discoveryResult: ContactDiscoveryResponse | null
   resumeReady: boolean
+  jdReady: boolean
   pastDiscovery: boolean
   pastResume: boolean
+  pastJd: boolean
 }): Frame {
-  const { company, discoveryResult, resumeReady, pastDiscovery, pastResume } =
-    args
+  const {
+    company,
+    discoveryResult,
+    resumeReady,
+    jdReady,
+    pastDiscovery,
+    pastResume,
+    pastJd,
+  } = args
   if (!company) return 1
   if (!discoveryResult) return 2
   if (!pastDiscovery) return 3
   if (!resumeReady || !pastResume) return 4
-  return 5
+  if (!jdReady || !pastJd) return 5
+  return 6
 }
 
 function formatBreakdownValue(
@@ -64,7 +78,7 @@ const BREAKDOWN_LABELS: Record<keyof ConfidenceBreakdown, string> = {
 }
 
 /**
- * Persistent `/` home: company → role → discovery → resume → JD.
+ * Persistent `/` home: company → role → discovery → resume → JD → email.
  * Exactly one frame at a time; frame is flow state, not a route.
  */
 export function HomePage() {
@@ -78,15 +92,22 @@ export function HomePage() {
     useState<ContactDiscoveryResponse | null>(initial.discoveryResult)
   const [jobDescription, setJobDescription] =
     useState<JobDescriptionOut | null>(initial.jobDescription)
+  const [generatedEmail, setGeneratedEmail] =
+    useState<GeneratedEmailOut | null>(initial.generatedEmail)
 
-  // Skip FRAME 3 on rehydrate when a resume/JD was already extracted this tab.
+  // Skip FRAME 3 on rehydrate when a resume/JD/email was already saved this tab.
   const [pastDiscovery, setPastDiscovery] = useState(
-    () => initial.resume != null || initial.jobDescription != null,
+    () =>
+      initial.resume != null ||
+      initial.jobDescription != null ||
+      initial.generatedEmail != null,
   )
-  // Skip resume confirmation on rehydrate only when JD already exists.
+  // Skip resume confirmation on rehydrate only when JD/email already exists.
   const [pastResume, setPastResume] = useState(
-    () => initial.jobDescription != null,
+    () => initial.jobDescription != null || initial.generatedEmail != null,
   )
+  // Skip JD confirmation on rehydrate only when a generated email already exists.
+  const [pastJd, setPastJd] = useState(() => initial.generatedEmail != null)
 
   const [companyQuery, setCompanyQuery] = useState('')
   const [candidates, setCandidates] = useState<CompanySearchCandidate[] | null>(
@@ -111,8 +132,10 @@ export function HomePage() {
     company,
     discoveryResult,
     resumeReady: resumeForGeneration.resume?.extracted_data != null,
+    jdReady: jobDescription?.extracted_data != null,
     pastDiscovery,
     pastResume,
+    pastJd,
   })
 
   const searchMutation = useMutation({
@@ -157,7 +180,9 @@ export function HomePage() {
       setDiscoveryResult(data)
       setPastDiscovery(false)
       setPastResume(false)
+      setPastJd(false)
       setJobDescription(null)
+      setGeneratedEmail(null)
       resumeForGeneration.reset()
       writeDiscoveryResult(company, data)
     },
@@ -174,8 +199,10 @@ export function HomePage() {
     setCompany(next)
     setDiscoveryResult(null)
     setJobDescription(null)
+    setGeneratedEmail(null)
     setPastDiscovery(false)
     setPastResume(false)
+    setPastJd(false)
     setCandidates(null)
     setShowManualFallback(false)
     setSearchError(null)
@@ -189,8 +216,10 @@ export function HomePage() {
     setCompany(null)
     setDiscoveryResult(null)
     setJobDescription(null)
+    setGeneratedEmail(null)
     setPastDiscovery(false)
     setPastResume(false)
+    setPastJd(false)
     setCompanyQuery('')
     setCandidates(null)
     setShowManualFallback(false)
@@ -244,9 +273,16 @@ export function HomePage() {
     setPastResume(true)
   }
 
+  function handleContinueFromJd() {
+    if (!jobDescription?.extracted_data) return
+    setPastJd(true)
+  }
+
   function handleJobDescriptionReady(jd: JobDescriptionOut) {
     if (!company || !discoveryResult || !resumeForGeneration.resume) return
     setJobDescription(jd)
+    setGeneratedEmail(null)
+    setPastJd(false)
     writeJobDescriptionResult(
       company,
       discoveryResult,
@@ -255,7 +291,28 @@ export function HomePage() {
     )
   }
 
+  function handleGeneratedEmailReady(email: GeneratedEmailOut) {
+    if (
+      !company ||
+      !discoveryResult ||
+      !resumeForGeneration.resume ||
+      !jobDescription
+    ) {
+      return
+    }
+    setGeneratedEmail(email)
+    writeGeneratedEmailResult(
+      company,
+      discoveryResult,
+      resumeForGeneration.resume,
+      jobDescription,
+      email,
+    )
+  }
+
   const companyIdForJd = discoveryResult?.contact?.company_id ?? null
+  const contactId = discoveryResult?.contact?.id ?? null
+  const resumeId = resumeForGeneration.resumeId
 
   return (
     <main className="home-page discovery-page">
@@ -492,6 +549,20 @@ export function HomePage() {
           companyName={company.name}
           initialJobDescription={jobDescription}
           onReady={handleJobDescriptionReady}
+          onContinue={handleContinueFromJd}
+        />
+      ) : null}
+
+      {frame === 6 &&
+      contactId != null &&
+      resumeId != null &&
+      jobDescription != null ? (
+        <GeneratedEmailStep
+          contactId={contactId}
+          resumeId={resumeId}
+          jobDescriptionId={jobDescription.id}
+          initialGeneratedEmail={generatedEmail}
+          onReady={handleGeneratedEmailReady}
         />
       ) : null}
     </main>

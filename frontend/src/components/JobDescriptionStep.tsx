@@ -13,6 +13,7 @@ type Props = {
   companyName: string
   initialJobDescription: JobDescriptionOut | null
   onReady: (jd: JobDescriptionOut) => void
+  onContinue: () => void
 }
 
 function ExtractionSummary({ data }: { data: JDExtraction }) {
@@ -63,6 +64,7 @@ export function JobDescriptionStep({
   companyName,
   initialJobDescription,
   onReady,
+  onContinue,
 }: Props) {
   const [jobDescription, setJobDescription] = useState<JobDescriptionOut | null>(
     initialJobDescription,
@@ -115,9 +117,9 @@ export function JobDescriptionStep({
             : ''}
         </p>
         <ExtractionSummary data={jobDescription.extracted_data} />
-        <p className="discovery-muted">
-          Resume and job description are ready. Email generation comes next.
-        </p>
+        <button type="button" onClick={onContinue}>
+          Continue to generate email
+        </button>
       </section>
     )
   }

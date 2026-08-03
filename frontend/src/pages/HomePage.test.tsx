@@ -600,6 +600,9 @@ describe('HomePage discovery flow', () => {
     expect(screen.getByText('SQL')).toBeInTheDocument()
     expect(screen.getByText('Own services')).toBeInTheDocument()
     expect(screen.getByText('mid')).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /continue to generate email/i }),
+    ).toBeInTheDocument()
 
     const createCall = vi.mocked(fetch).mock.calls[0]
     expect(createCall[0]).toBe('http://localhost:8000/job-descriptions')
@@ -672,6 +675,7 @@ describe('HomePage discovery flow', () => {
           },
           created_at: '2026-08-03T00:00:00Z',
         },
+        generatedEmail: null,
       }),
     )
 
@@ -680,7 +684,222 @@ describe('HomePage discovery flow', () => {
     expect(screen.getByText('Extracted job description')).toBeInTheDocument()
     expect(screen.getByText('Go')).toBeInTheDocument()
     expect(screen.getByText('senior')).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: /continue to generate email/i }),
+    ).toBeInTheDocument()
     expect(screen.queryByText('Extracted resume')).not.toBeInTheDocument()
     expect(fetch).not.toHaveBeenCalled()
+  })
+
+  const sampleGeneratedEmail = {
+    id: 99,
+    contact_id: 1,
+    resume_id: 7,
+    job_description_id: 3,
+    subject: 'Quick note about the Engineer role',
+    body: 'Hi Alex,\n\nI noticed the Engineer opening at Acme.\n\nBest,\nJane',
+    eval_score: 4.2,
+    eval_breakdown: {
+      gates: {
+        no_unsupported_claims: true,
+        correct_contact_name_used: true,
+      },
+      dimensions: {
+        role_company_specificity: 4,
+        relevance_alignment: 5,
+        tone_professionalism: 4,
+        conciseness: 4,
+        clear_cta: 4,
+      },
+    },
+    match_data: {
+      skill_matches: [
+        {
+          jd_requirement: 'Go',
+          matched: true,
+          resume_evidence: 'Shipped Go services',
+        },
+      ],
+      experience_alignment: [
+        {
+          jd_responsibility: 'Ship',
+          resume_evidence: 'Owned launches',
+          strength: 'strong' as const,
+        },
+      ],
+      unmatched_jd_requirements: ['Kubernetes'],
+      notable_resume_strengths: ['API design'],
+      overall_match_summary: 'Strong overlap on backend shipping experience.',
+    },
+    gate_passed: true,
+    created_at: '2026-08-03T12:00:00Z',
+  }
+
+  const flowThroughJd = {
+    company: { name: 'Acme Inc', domain: 'acme.com' },
+    discoveryResult: sampleContact,
+    resume: {
+      id: 7,
+      user_id: 1,
+      raw_text: 'Jane',
+      extracted_data: {
+        skills: ['Python'],
+        experience: [],
+        education: [],
+      },
+      created_at: '2026-08-03T00:00:00Z',
+    },
+    jobDescription: {
+      id: 3,
+      user_id: 1,
+      company_id: 10,
+      role_title: 'Engineer',
+      raw_text: 'JD text',
+      extracted_data: {
+        required_skills: ['Go'],
+        responsibilities: ['Ship'],
+        seniority_level: 'senior',
+      },
+      created_at: '2026-08-03T00:00:00Z',
+    },
+    generatedEmail: null as typeof sampleGeneratedEmail | null,
+  }
+
+  it('generate-email success shows result, persists, and hides Generate button', async () => {
+    const user = userEvent.setup()
+    sessionStorage.setItem(DISCOVERY_FLOW_KEY, JSON.stringify(flowThroughJd))
+    vi.mocked(fetch).mockResolvedValue(jsonResponse(sampleGeneratedEmail, 201))
+
+    renderHome()
+    await user.click(
+      screen.getByRole('button', { name: /continue to generate email/i }),
+    )
+    await user.click(screen.getByRole('button', { name: /generate email/i }))
+
+    expect(
+      await screen.findByText('Generated outreach email'),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText('Quick note about the Engineer role'),
+    ).toBeInTheDocument()
+    expect(screen.getByText(/Hi Alex/)).toBeInTheDocument()
+    expect(screen.getByText(/Eval score: 4\.2/)).toBeInTheDocument()
+    expect(screen.getByText(/Cleared hard gates/)).toBeInTheDocument()
+    expect(
+      screen.getByText('Strong overlap on backend shipping experience.'),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /^generate email$/i }),
+    ).not.toBeInTheDocument()
+
+    const generateCall = vi.mocked(fetch).mock.calls[0]
+    expect(generateCall[0]).toBe('http://localhost:8000/generated-emails')
+    expect(JSON.parse(generateCall[1]?.body as string)).toEqual({
+      contact_id: 1,
+      resume_id: 7,
+      job_description_id: 3,
+    })
+    expect(
+      JSON.parse(sessionStorage.getItem(DISCOVERY_FLOW_KEY)!).generatedEmail.id,
+    ).toBe(99)
+
+    const matchDetails = screen.getByText('Match details').closest('details')
+    expect(matchDetails).not.toBeNull()
+    expect(matchDetails).not.toHaveAttribute('open')
+    await user.click(screen.getByText('Match details'))
+    expect(
+      within(matchDetails as HTMLElement).getByText(/Kubernetes/),
+    ).toBeInTheDocument()
+  })
+
+  it('generate-email error surfaces user_message and offers Retry', async () => {
+    const user = userEvent.setup()
+    sessionStorage.setItem(DISCOVERY_FLOW_KEY, JSON.stringify(flowThroughJd))
+    vi.mocked(fetch).mockResolvedValue(
+      jsonResponse(
+        {
+          user_message:
+            'Contact and job description must belong to the same company. Contact is tied to company_id=10; job description is tied to company_id=11.',
+          error_code: 'ValidationError',
+        },
+        422,
+      ),
+    )
+
+    renderHome()
+    await user.click(
+      screen.getByRole('button', { name: /continue to generate email/i }),
+    )
+    await user.click(screen.getByRole('button', { name: /generate email/i }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      /must belong to the same company/i,
+    )
+    expect(screen.getByRole('button', { name: /^retry$/i })).toBeInTheDocument()
+    expect(
+      screen.queryByText('Generated outreach email'),
+    ).not.toBeInTheDocument()
+  })
+
+  it('rehydrates to FRAME 6 result when sessionStorage has generatedEmail', () => {
+    sessionStorage.setItem(
+      DISCOVERY_FLOW_KEY,
+      JSON.stringify({
+        ...flowThroughJd,
+        generatedEmail: {
+          ...sampleGeneratedEmail,
+          gate_passed: false,
+          eval_breakdown: {
+            ...sampleGeneratedEmail.eval_breakdown,
+            gates: {
+              no_unsupported_claims: false,
+              correct_contact_name_used: true,
+            },
+          },
+        },
+      }),
+    )
+
+    renderHome()
+
+    expect(screen.getByText('Generated outreach email')).toBeInTheDocument()
+    expect(
+      screen.getByText(/Flagged — did not clear hard gates/i),
+    ).toBeInTheDocument()
+    expect(screen.getByText('Fail')).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /generate email/i }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByText('Extracted job description'),
+    ).not.toBeInTheDocument()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('copy subject and body writes paste-ready text to the clipboard', async () => {
+    const user = userEvent.setup()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('navigator', {
+      ...navigator,
+      clipboard: { writeText },
+    })
+
+    sessionStorage.setItem(
+      DISCOVERY_FLOW_KEY,
+      JSON.stringify({
+        ...flowThroughJd,
+        generatedEmail: sampleGeneratedEmail,
+      }),
+    )
+
+    renderHome()
+    await user.click(
+      screen.getByRole('button', { name: /copy subject and body/i }),
+    )
+
+    expect(writeText).toHaveBeenCalledWith(
+      'Subject: Quick note about the Engineer role\n\nHi Alex,\n\nI noticed the Engineer opening at Acme.\n\nBest,\nJane',
+    )
+    expect(await screen.findByText(/copied to clipboard/i)).toBeInTheDocument()
   })
 })
