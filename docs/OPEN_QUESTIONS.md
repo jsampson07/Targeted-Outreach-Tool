@@ -36,6 +36,9 @@ HunterProvider fetches at most 100 emails per domain (limit=100, no pagination �
 ### GENERATED_EMAILS.user_id denormalization
 `GENERATED_EMAILS` has no `user_id` column. Ownership for `GET /generated-emails/{id}` ships as **Option A**: join to `RESUMES` on `resume_id` and filter `Resume.user_id == current_user.id`, relying on the write-time invariant that `generate_and_persist_email` only persists rows whose resume and JD were both loaded through ownership-filtered helpers for the same user. **Option B** — a denormalized, indexed `user_id` column on `GENERATED_EMAILS` — was considered and deferred. That pattern mirrors the deliberate field-duplication already accepted for `CONTACTS.confidence_breakdown` (persist once, read without recomputing) and `RAW_PROVIDER_RESULTS` candidate fields (normalize at write so reads stay cheap/indexable). Stated trigger to revisit: if the analytics view (Phase 4) makes this join a repeated, measured cost — or immediately if a real load test shows it.
 
+### Resume picker / reuse across searches (Option 3)
+**Option 2 shipped** on the home-page flow: every search uploads and extracts a fresh resume (multipart `POST /resumes` → `POST /resumes/{id}/extract`). No list/picker/management UI. The frontend deliberately isolates "how a `resume_id` is obtained for this generation" behind `useResumeForGeneration` so Option 3 — picking a previously saved/extracted resume instead of re-uploading — remains a contained swap of that hook's internals, not a rewrite of the surrounding frames. Stated trigger to revisit: real usage showing the same resume text is being re-pasted/re-uploaded across many searches (redundant LLM extract cost), not a hypothetical preference for a library UI.
+
 ### Stubbed during the first discovery-pipeline build (defaulted, not designed)
 - **Name-collision resolution**: detection is real; resolution is highest-tier-wins,
   first-returned as tiebreak. Revisit once real multi-candidate collisions are observed.
@@ -44,6 +47,9 @@ HunterProvider fetches at most 100 emails per domain (limit=100, no pagination �
 - **Company.name for discovery-only creation**: naive placeholder derived from domain
   when no existing row exists. Superseded once §7's company-name-resolution endpoint
   is built and wired ahead of discovery.
+
+### Dual "role title" inputs across FRAME 2 and FRAME 5 (UX clarity)
+FRAME 2 (contact discovery) and FRAME 5 (JD creation) both prompt the user for a "role title," but they are genuinely distinct fields serving distinct purposes: FRAME 2's feeds `ContactDiscoveryRequest.role_title` (currently unused by tiering — see "role_title's effect on tiering" in Resolved), while FRAME 5's feeds `JobDescriptionCreate.role_title` (used downstream in matching/generation). Nothing in the current UI explains this distinction, so a user re-entering what looks like the same information twice, with no stated reason, is a real UX gap — not a data-model issue. Deferred to the Phase 3 frontend-polish pass rather than fixed now, since the underlying fields and their separate purposes are correctly designed; what's missing is UI copy/flow, not schema or logic. Revisit trigger: the Phase 3 polish pass, or immediately if real usage (i.e., the developer's own job search) surfaces confusion firsthand.
 
 ---
 

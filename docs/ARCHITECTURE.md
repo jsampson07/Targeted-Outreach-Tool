@@ -231,9 +231,9 @@ class CompanySearchResponse(BaseModel):
 
 ### 8.1 Routing
 
-**Decision:** `react-router-dom` (`BrowserRouter`) with public `/login` `/signup` routes and a `ProtectedRoute` wrapper that redirects to `/login` when `!isAuthenticated`. A single persistent home route (`/`) hosts the product flow — company resolution, contact discovery, and later resume/JD upload + generated email — as accumulating frames/sections on that one page, **not** as one route per feature.
+**Decision:** `react-router-dom` (`BrowserRouter`) with public `/login` `/signup` routes and a `ProtectedRoute` wrapper that redirects to `/login` when `!isAuthenticated`. A single persistent home route (`/`) hosts the product flow — company resolution, contact discovery, resume/JD upload+extract, and later generated email — as accumulating frames/sections on that one page, **not** as one route per feature.
 
-**Reasoning:** At this scale there is no serious alternative worth debating — React Router is the default for React SPAs, and the protected-route pattern matches the JWT-gated backend without inventing a custom gate. Flow steps (e.g. search → role title → discovery result) are component state on `/`, not URL segments: deep-linking mid-flow is not a v1 need, and keeping one route avoids inventing a multi-step URL scheme before the later upload/email slices land on the same page.
+**Reasoning:** At this scale there is no serious alternative worth debating — React Router is the default for React SPAs, and the protected-route pattern matches the JWT-gated backend without inventing a custom gate. Flow steps (search → role title → discovery → resume → JD → …) are component state on `/`, not URL segments: deep-linking mid-flow is not a v1 need, and keeping one route avoids inventing a multi-step URL scheme before the generate-email slice lands on the same page.
 
 ### 8.2 Server state: TanStack Query
 
@@ -243,19 +243,20 @@ class CompanySearchResponse(BaseModel):
 
 **Alternative considered:** Skip TanStack Query until the first feature screen needs caching. Rejected because the root provider is cheap and the duplicated-boilerplate cost shows up immediately across multiple API-calling screens.
 
-### 8.2.1 `useMutation` for company search and contact discovery
+### 8.2.1 `useMutation` for company search, contact discovery, and document extract
 
-**Decision:** `POST /companies/search` and `POST /contacts/discover` are wired with TanStack Query `useMutation`, **not** `useQuery`.
+**Decision:** `POST /companies/search`, `POST /contacts/discover`, resume upload+extract, and JD create+extract are wired with TanStack Query `useMutation`, **not** `useQuery`.
 
-**Reasoning:** Both are side-effecting, user-triggered actions (submit a search; spend discovery credits), not cacheable/refetchable reads. `useQuery` would imply background refetch, stale-while-revalidate, and remount-triggered re-execution — wrong for a Clearbit lookup that should fire once per submit, and actively harmful for discovery, which spends real, rationed provider credits (Hunter: 50/month). Mutation semantics (explicit `mutate`, no automatic refetch) match the product contract.
+**Reasoning:** These are side-effecting, user-triggered actions (submit a search; spend discovery credits; spend LLM extract credits), not cacheable/refetchable reads. `useQuery` would imply background refetch, stale-while-revalidate, and remount-triggered re-execution — wrong for a Clearbit lookup that should fire once per submit, and actively harmful for discovery/extract, which spend real, rationed credits. Mutation semantics (explicit `mutate`, no automatic refetch) match the product contract.
 
 ### 8.2.2 Discovery-flow sessionStorage persistence
 
-**Decision:** Persist discovery flow state in `sessionStorage` under a single namespaced key `discoveryFlow`, storing one JSON object `{ company, discoveryResult }`. Do **not** use `localStorage` for this payload. Do **not** persist the raw company-search candidate list.
+**Decision:** Persist home-page flow state in `sessionStorage` under a single namespaced key `discoveryFlow`, storing one JSON object `{ company, discoveryResult, resume, jobDescription }`. Do **not** use `localStorage` for this payload. Do **not** persist the raw company-search candidate list. Document fields were added to this same key (not a sibling) so "Start new search" and rehydration stay one clear/one read — see §8.2.3 for the document-field extension.
 
 **What is persisted:**
-- On successful company lock-in (candidate click or manual domain entry): `{ company: { name, domain }, discoveryResult: null }` — written immediately, before `role_title` is entered, so a refresh during the role-title frame rehydrates there rather than back to company search.
-- On discovery mutation completion (contact found **or** `contact: null` — both are valid completed outcomes): the full `ContactDiscoveryResponse` is written under the same object.
+- On successful company lock-in (candidate click or manual domain entry): `{ company: { name, domain }, discoveryResult: null, resume: null, jobDescription: null }` — written immediately, before `role_title` is entered, so a refresh during the role-title frame rehydrates there rather than back to company search.
+- On discovery mutation completion (contact found **or** `contact: null` — both are valid completed outcomes): the full `ContactDiscoveryResponse` is written under the same object; document fields are cleared (new discovery starts a new pipeline).
+- On successful resume/JD extract: the post-extract `ResumeOut` / `JobDescriptionOut` objects are written under `resume` / `jobDescription` (see §8.2.3).
 
 **What is not persisted:** The candidate list from `POST /companies/search`. That call is free (keyless Clearbit) and idempotent; re-running it after a refresh is fine and cheaper than storing ephemeral suggestion UI.
 
@@ -263,9 +264,31 @@ class CompanySearchResponse(BaseModel):
 
 **Why discovery persistence is a cost/correctness concern:** `POST /contacts/discover` spends real, rationed provider credits. If a refresh silently re-triggered discovery, credits would burn on an accidental reload. Rehydrating the result frame from storage (no re-fetch) prevents that. On mount, the home page reads `discoveryFlow` once via a lazy `useState` initializer and lands directly on the correct frame — no flash of the company-search frame. "Start new search" clears both component state and the `sessionStorage` key.
 
+### 8.2.3 Resume + JD upload/extract frames (FRAME 4–5)
+
+**Decision:** After contact discovery (FRAME 3), the same `/` page continues with two more exclusive frames — resume upload+extract, then JD paste+extract — before the generate-email step (separate slice). No new routes.
+
+**Frame order (locked for this slice):** FRAME 1 company search → FRAME 2 role title → FRAME 3 discovery result → FRAME 4 resume → FRAME 5 JD. Resume stays before JD: resume creation does not need `company_id`, and JD creation does. Ordering JD first would not make `company_id` available any earlier — see below.
+
+**Backend contracts verified against routers/services (not docs alone):**
+- **Resume create:** `POST /resumes` is **multipart** with form field `file` (PDF/DOCX). Server parses via pypdf/python-docx into `raw_text`, then persists. Not a JSON `ResumeCreate{raw_text}` body — that Pydantic model is an internal post-parse shape only.
+- **Resume extract:** `POST /resumes/{resume_id}/extract` → `ResumeOut` (overwrites `extracted_data`).
+- **JD create:** `POST /job-descriptions` JSON `{ raw_text, company_id, role_title }` → `JobDescriptionOut`.
+- **JD extract:** `POST /job-descriptions/{jd_id}/extract` → `JobDescriptionOut`.
+- **JD read:** `GET /job-descriptions/{jd_id}` → `JobDescriptionOut` (ownership-filtered; available for refetch-by-id).
+- **Resume upload validation (server):** only `.pdf`/`.docx`; 2MB cap (`user_message`: `"File too large"`); min 50 chars extracted text after parse (scanned-image style message). Frontend mirrors extension + 2MB checks client-side; the 50-char rule remains server-only (depends on parse).
+
+**`company_id` source:** Frame 1's locked company is `{ name, domain }` only — no id. Discovery's `get_or_create_company` creates/finds the row server-side, but `ContactDiscoveryResponse` only exposes `company_id` on a found `contact`. The JD step therefore uses `discoveryResult.contact.company_id`. When `contact` is null, FRAME 3 does not offer Continue (cannot create a JD frontend-only without a backend change to return `company_id` on empty discovery).
+
+**`useResumeForGeneration` isolation boundary:** How a `resume_id` is obtained for generation is isolated in `hooks/useResumeForGeneration.ts`. Current internals are Option 2 — fresh multipart upload + extract every search (`useMutation`, create then extract). Callers consume `resume` / `resumeId` / `obtainFromUpload`. A future saved-resume picker (Option 3) should swap this hook's internals only — see `OPEN_QUESTIONS.md`.
+
+**JD step:** paste `raw_text` + `role_title` (collected on FRAME 5, not reused from the discovery role-title field), `company_id` from the contact; `useMutation` for create+extract. Displays `JDExtraction` (`required_skills`, `responsibilities`, `seniority_level`).
+
+**sessionStorage extension:** Added `resume` and `jobDescription` fields on the existing `discoveryFlow` object (not a sibling key). Same third-party-PII / paid-action reasoning as discovery: extract endpoints spend LLM credits; refresh must rehydrate the confirmation UI without re-calling `/extract`. Full post-extract Out objects are stored (mirrors storing full `ContactDiscoveryResponse`). `GET /job-descriptions/{id}` remains available if a later slice prefers id-only storage + refetch.
+
 ### 8.3 API client and shared 401 handling
 
-**Decision:** A single `request(path, options)` wrapper around `fetch` (not axios). Base URL from `import.meta.env.VITE_API_BASE_URL`. Attaches `Authorization: Bearer <access_token>` from localStorage when present. On non-2xx, throws an `ApiError` carrying the backend's `{user_message, error_code}` shape so UI code can surface `user_message` directly. On **401 when an Authorization header was actually sent**: clear both tokens from localStorage and `window.location.assign('/login')` — no refresh attempt.
+**Decision:** A single `request(path, options)` wrapper around `fetch` (not axios). Base URL from `import.meta.env.VITE_API_BASE_URL`. Attaches `Authorization: Bearer <access_token>` from localStorage when present. JSON bodies set `Content-Type: application/json`; `FormData` bodies are passed through without forcing that header (browser sets the multipart boundary). On non-2xx, throws an `ApiError` carrying the backend's `{user_message, error_code}` shape so UI code can surface `user_message` directly. On **401 when an Authorization header was actually sent**: clear both tokens from localStorage and `window.location.assign('/login')` — no refresh attempt.
 
 **Reasoning:** One shared 401 path means callers never re-implement "session died" behavior. Refresh-on-401 is deliberately out of scope for this slice (redirect-to-login only); `POST /auth/refresh` exists on the backend but is unused here. The "Authorization was sent" guard matters because `/auth/login` also returns 401 for bad credentials — without it, a failed login would clear storage and force a full-page reload instead of showing `user_message` on the form.
 

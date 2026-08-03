@@ -66,6 +66,8 @@ class ResumeExtraction(BaseModel):
 
 **Assumption:** File parsing (PDF/docx → text) happens in the router/service before `ResumeCreate` is constructed, so this schema only ever handles text, never file bytes — keeping Pydantic's job "validate structured data" rather than "handle file I/O."
 
+**Decision (gap filled):** The HTTP create path is **not** `POST /resumes` with a JSON `ResumeCreate` body. The live router accepts **multipart** `UploadFile` under the form field name `file` (`POST /resumes`), parses PDF/DOCX server-side (pypdf / python-docx), enforces a 2MB cap and a 50-character minimum on extracted text, then builds `ResumeCreate(raw_text=...)` internally before insert. `ResumeCreate` remains the internal/validated text shape; clients that send JSON `{raw_text}` will not match the endpoint. Limits and `user_message` copy are locked in `app/services/resume.py`.
+
 ### 2.3 JOB_DESCRIPTIONS
 
 Structurally identical to Resumes:
@@ -78,6 +80,7 @@ class JobDescriptionCreate(BaseModel):
 
 class JobDescriptionOut(BaseModel):
     id: int
+    user_id: int
     company_id: int
     role_title: str
     raw_text: str
@@ -92,6 +95,8 @@ class JDExtraction(BaseModel):
 ```
 
 **Decision:** A GET-by-id route now exists — `GET /job-descriptions/{jd_id}` → `JobDescriptionOut` (no schema change; the response shape already covered both pre- and post-extraction state via `extracted_data: JDExtraction | None`). Added to unblock frontend refetch-by-id after upload without either re-running paid `POST …/extract` or persisting raw JD text in browser storage. Ownership filtering reuses the existing `get_job_description_by_id` helper (id+user_id); see `OPEN_QUESTIONS.md` Resolved "JD read-access control".
+
+**Decision (gap filled):** `JobDescriptionOut.user_id` is present on the live schema (`app/schemas/job_description.py`) and was omitted from this snippet previously. Added here so the documented Out shape matches the API response. JD create remains JSON `JobDescriptionCreate` (paste text) — not multipart — unlike resumes.
 
 ### 2.4 COMPANIES
 

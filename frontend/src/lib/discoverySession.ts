@@ -3,21 +3,25 @@ import type {
   LockedCompany,
   PersistedDiscoveryFlow,
 } from './discoveryTypes'
+import type { JobDescriptionOut, ResumeOut } from './documentTypes'
 
 /**
- * Namespaced sessionStorage key for the company-resolution + contact-discovery
- * flow. One JSON object ({ company, discoveryResult }) — not multiple keys.
+ * Namespaced sessionStorage key for the home-page flow (company resolution,
+ * contact discovery, resume/JD extract results). One JSON object — not
+ * multiple keys.
  *
  * sessionStorage (not localStorage) is deliberate: a discovered contact's
- * name/email is third-party PII, not just the user's own data. sessionStorage
- * clears on tab close (bounded exposure); localStorage would leave it sitting
- * indefinitely.
+ * name/email is third-party PII, and extract results are paid LLM outputs.
+ * sessionStorage clears on tab close (bounded exposure); localStorage would
+ * leave them sitting indefinitely.
  */
 export const DISCOVERY_FLOW_KEY = 'discoveryFlow'
 
 const EMPTY: PersistedDiscoveryFlow = {
   company: null,
   discoveryResult: null,
+  resume: null,
+  jobDescription: null,
 }
 
 export function readDiscoveryFlow(): PersistedDiscoveryFlow {
@@ -30,10 +34,16 @@ export function readDiscoveryFlow(): PersistedDiscoveryFlow {
     return {
       company: parsed.company ?? null,
       discoveryResult: parsed.discoveryResult ?? null,
+      resume: parsed.resume ?? null,
+      jobDescription: parsed.jobDescription ?? null,
     }
   } catch {
     return EMPTY
   }
+}
+
+function writeFlow(payload: PersistedDiscoveryFlow): void {
+  sessionStorage.setItem(DISCOVERY_FLOW_KEY, JSON.stringify(payload))
 }
 
 export function writeCompanyLock(company: LockedCompany): void {
@@ -41,11 +51,13 @@ export function writeCompanyLock(company: LockedCompany): void {
   // FRAME 2 rehydrates to FRAME 2, not FRAME 1. Candidate lists from
   // /companies/search are intentionally NOT persisted — that call is free
   // (keyless Clearbit) and idempotent; re-running on refresh is fine.
-  const payload: PersistedDiscoveryFlow = {
+  // New company lock clears discovery + document results for this search.
+  writeFlow({
     company,
     discoveryResult: null,
-  }
-  sessionStorage.setItem(DISCOVERY_FLOW_KEY, JSON.stringify(payload))
+    resume: null,
+    jobDescription: null,
+  })
 }
 
 export function writeDiscoveryResult(
@@ -56,11 +68,42 @@ export function writeDiscoveryResult(
   // completed outcomes. POST /contacts/discover spends real, rationed provider
   // credits (Hunter: 50/month). Persisting so a refresh rehydrates FRAME 3
   // from storage (no re-fetch) is a correctness/cost concern, not UX polish.
-  const payload: PersistedDiscoveryFlow = {
+  // Clear document fields: a new discovery starts a new search pipeline.
+  writeFlow({
     company,
     discoveryResult,
-  }
-  sessionStorage.setItem(DISCOVERY_FLOW_KEY, JSON.stringify(payload))
+    resume: null,
+    jobDescription: null,
+  })
+}
+
+export function writeResumeResult(
+  company: LockedCompany,
+  discoveryResult: ContactDiscoveryResponse,
+  resume: ResumeOut,
+): void {
+  // Persist after successful upload+extract so refresh does not re-pay LLM.
+  const current = readDiscoveryFlow()
+  writeFlow({
+    company,
+    discoveryResult,
+    resume,
+    jobDescription: current.jobDescription,
+  })
+}
+
+export function writeJobDescriptionResult(
+  company: LockedCompany,
+  discoveryResult: ContactDiscoveryResponse,
+  resume: ResumeOut,
+  jobDescription: JobDescriptionOut,
+): void {
+  writeFlow({
+    company,
+    discoveryResult,
+    resume,
+    jobDescription,
+  })
 }
 
 export function clearDiscoveryFlow(): void {
