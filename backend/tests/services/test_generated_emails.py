@@ -71,8 +71,10 @@ _MATCH_DATA = MatchData(
 
 _EMAIL_DRAFT = EmailDraft(
     subject="Quick note about the Backend Engineer role",
-    body="Hi Jordan,\n\nWould you be open to a brief chat?\n\nBest,\nAlex",
+    body="Hi Jordan,\n\nWould you be open to a brief chat?",
 )
+
+_UNSIGNED_CLOSING = "\n\nBest regards,"
 
 # Dimensions 5+4+3+2+1 = 15 → mean 3.0
 _EVAL_RESULT = EvalResult(
@@ -201,7 +203,7 @@ def test_generate_and_persist_happy_path(
     assert row.resume_id == resume.id
     assert row.job_description_id == jd.id
     assert row.subject == _EMAIL_DRAFT.subject
-    assert row.body == _EMAIL_DRAFT.body
+    assert row.body == f"{_EMAIL_DRAFT.body}{_UNSIGNED_CLOSING}"
     assert row.eval_score == pytest.approx(3.0)
     assert row.gate_passed is True
     assert row.match_data == _MATCH_DATA.model_dump()
@@ -364,3 +366,107 @@ def test_regeneration_inserts_second_row(
     )
     assert len(rows) == 2
     assert {rows[0].id, rows[1].id} == {first.id, second.id}
+
+
+def test_signature_appends_candidate_name(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+):
+    _patch_llm_pipeline(monkeypatch)
+    user = _user(db_session, "gen-sig-named@example.com")
+    company = _company(db_session, domain="acme-sig-named.test")
+    contact = _contact(db_session, company)
+    extraction = _RESUME_EXTRACTION.model_copy(
+        update={"candidate_name": "Jane Doe"}
+    )
+    resume = Resume(
+        user_id=user.id,
+        raw_text="Jane Doe Python engineer with API experience.",
+        extracted_data=extraction.model_dump(),
+    )
+    db_session.add(resume)
+    db_session.flush()
+    jd = _jd(db_session, user, company)
+
+    row = asyncio.run(
+        generated_emails_service.generate_and_persist_email(
+            db_session, user, contact.id, resume.id, jd.id
+        )
+    )
+
+    assert row.body == f"{_EMAIL_DRAFT.body}\n\nBest regards,\nJane Doe"
+    assert row.body.count("Best regards,") == 1
+
+
+def test_signature_omits_name_when_candidate_name_none(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+):
+    _patch_llm_pipeline(monkeypatch)
+    user = _user(db_session, "gen-sig-none@example.com")
+    company = _company(db_session, domain="acme-sig-none.test")
+    contact = _contact(db_session, company)
+    resume = _resume(db_session, user)
+    jd = _jd(db_session, user, company)
+
+    row = asyncio.run(
+        generated_emails_service.generate_and_persist_email(
+            db_session, user, contact.id, resume.id, jd.id
+        )
+    )
+
+    assert row.body == f"{_EMAIL_DRAFT.body}{_UNSIGNED_CLOSING}"
+    assert not row.body.endswith("\nNone")
+    assert "Jane Doe" not in row.body
+    assert row.body.count("Best regards,") == 1
+
+
+def test_signature_appended_once_after_refine_pass(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+):
+    """Signature is post-eval only — refine inside evaluate_with_retry must not double it."""
+    refined = EmailDraft(
+        subject="Refined subject",
+        body="Hi Jordan,\n\nRevised body after gate feedback.",
+    )
+    monkeypatch.setattr(
+        generated_emails_service,
+        "generate_match_data",
+        AsyncMock(return_value=_MATCH_DATA),
+    )
+    monkeypatch.setattr(
+        generated_emails_service,
+        "generate_email",
+        AsyncMock(return_value=_EMAIL_DRAFT),
+    )
+    monkeypatch.setattr(
+        generated_emails_service,
+        "evaluate_with_retry",
+        AsyncMock(return_value=(refined, _EVAL_RESULT)),
+    )
+
+    user = _user(db_session, "gen-sig-refine@example.com")
+    company = _company(db_session, domain="acme-sig-refine.test")
+    contact = _contact(db_session, company)
+    extraction = _RESUME_EXTRACTION.model_copy(
+        update={"candidate_name": "Alex Rivera"}
+    )
+    resume = Resume(
+        user_id=user.id,
+        raw_text="Alex Rivera Python engineer.",
+        extracted_data=extraction.model_dump(),
+    )
+    db_session.add(resume)
+    db_session.flush()
+    jd = _jd(db_session, user, company)
+
+    row = asyncio.run(
+        generated_emails_service.generate_and_persist_email(
+            db_session, user, contact.id, resume.id, jd.id
+        )
+    )
+
+    assert row.body == (
+        "Hi Jordan,\n\nRevised body after gate feedback."
+        "\n\nBest regards,\nAlex Rivera"
+    )
+    assert row.body.count("Best regards,") == 1
+    assert row.body.count("Alex Rivera") == 1

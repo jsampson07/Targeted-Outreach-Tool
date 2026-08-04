@@ -109,6 +109,8 @@ def test_generate_email_prompt_includes_match_and_context():
     assert "resume dump" in prompt
     assert "Never mention, reference, imply, or acknowledge" in prompt
     assert "no acknowledgment of what's missing" in prompt
+    assert "Do NOT include any sign-off" in prompt
+    assert "appended programmatically" in prompt
 
 
 def test_generate_email_contact_name_none_uses_fallback_greeting_instructions():

@@ -12,7 +12,8 @@ from app.schemas.generated_email import (
     SkillMatch,
 )
 from app.schemas.job_description import JDExtraction
-from app.schemas.resume import ExperienceEntry, ResumeExtraction
+from app.llm.prompts import matching_prompt
+from app.schemas.resume import ExperienceEntry, ProjectEntry, ResumeExtraction
 from app.services import matching as matching_service
 
 
@@ -28,6 +29,53 @@ _RESUME_EXTRACTION = ResumeExtraction(
         )
     ],
     education=["BS Computer Science"],
+)
+
+_RESUME_WITH_PROJECT = ResumeExtraction(
+    candidate_name="Jane Doe",
+    skills=["Python"],
+    experience=[],
+    education=["BS Computer Science"],
+    projects=[
+        ProjectEntry(
+            name="KubeLab",
+            description="Personal Kubernetes learning lab",
+            technologies=["Kubernetes", "Python"],
+            bullet_points=["Deployed a multi-service stack on k8s"],
+        )
+    ],
+)
+
+_MATCH_DATA_FROM_PROJECT = MatchData(
+    skill_matches=[
+        SkillMatch(
+            jd_requirement="Python",
+            matched=True,
+            resume_evidence="skills lists Python",
+        ),
+        SkillMatch(
+            jd_requirement="Kubernetes",
+            matched=True,
+            resume_evidence="KubeLab project deployed a multi-service stack on k8s",
+        ),
+    ],
+    experience_alignment=[
+        ExperienceAlignment(
+            jd_responsibility="Design REST APIs",
+            resume_evidence=None,
+            strength="none",
+        ),
+        ExperienceAlignment(
+            jd_responsibility="Own on-call rotations",
+            resume_evidence=None,
+            strength="none",
+        ),
+    ],
+    unmatched_jd_requirements=[],
+    notable_resume_strengths=["KubeLab personal Kubernetes lab"],
+    overall_match_summary=(
+        "Kubernetes evidence comes from the KubeLab project, not formal roles."
+    ),
 )
 
 _JD_EXTRACTION = JDExtraction(
@@ -130,3 +178,34 @@ def test_generate_match_data_propagates_llm_extraction_error():
         )
 
     assert exc_info.value is error
+
+
+def test_matching_prompt_treats_projects_as_valid_evidence():
+    prompt = matching_prompt(_RESUME_WITH_PROJECT, _JD_EXTRACTION)
+    assert "equally valid evidence" in prompt
+    assert "KubeLab" in prompt
+    assert "Deployed a multi-service stack on k8s" in prompt
+
+
+def test_generate_match_data_can_use_project_resume_evidence():
+    llm = _mock_llm(_MATCH_DATA_FROM_PROJECT)
+
+    result = asyncio.run(
+        matching_service.generate_match_data(
+            _RESUME_WITH_PROJECT,
+            _JD_EXTRACTION,
+            llm_client=llm,
+        )
+    )
+
+    assert result is _MATCH_DATA_FROM_PROJECT
+    k8s_match = next(
+        m for m in result.skill_matches if m.jd_requirement == "Kubernetes"
+    )
+    assert k8s_match.matched is True
+    assert k8s_match.resume_evidence is not None
+    assert "KubeLab" in k8s_match.resume_evidence
+
+    prompt = llm.complete.await_args.args[0]
+    assert "equally valid evidence" in prompt
+    assert "KubeLab" in prompt

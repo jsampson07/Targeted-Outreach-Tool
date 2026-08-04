@@ -24,10 +24,21 @@ class ExperienceEntry(BaseModel):
     bullet_points: list[str]
 
 
+class ProjectEntry(BaseModel):
+    name: str
+    description: str | None = None
+    technologies: list[str] = []
+    bullet_points: list[str] = []
+
+
 class ResumeExtraction(BaseModel):
     skills: list[str]
     experience: list[ExperienceEntry]
     education: list[str]
+    # Defaults: pre-existing extracted_data JSONB rows without these keys
+    # still deserialize (same pattern as EvalGates.no_unprompted_gap_admission).
+    candidate_name: str | None = None
+    projects: list[ProjectEntry] = []
 
 
 ResumeOut.model_rebuild()

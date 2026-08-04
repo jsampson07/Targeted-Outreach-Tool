@@ -133,6 +133,16 @@ async def generate_and_persist_email(
         jd.role_title,
     )
 
+    # Signature is appended after evaluation so the judge never grades it.
+    # Generation/refine prompts forbid model-authored closings for the same reason.
+    if resume_extraction.candidate_name:
+        body = (
+            f"{final_email.body}\n\nBest regards,\n"
+            f"{resume_extraction.candidate_name}"
+        )
+    else:
+        body = f"{final_email.body}\n\nBest regards,"
+
     dims = eval_result.dimensions
     eval_score = (
         dims.role_company_specificity
@@ -152,7 +162,7 @@ async def generate_and_persist_email(
         resume_id=resume_id,
         job_description_id=job_description_id,
         subject=final_email.subject,
-        body=final_email.body,
+        body=body,
         eval_score=eval_score,
         eval_breakdown=eval_result.model_dump(),
         match_data=match_data.model_dump(),
