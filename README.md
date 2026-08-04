@@ -10,10 +10,6 @@ This tool takes a company and a role, discovers a contact with a transparent con
 
 ## Demo
 
-<!-- TODO: add docs/demo.gif (screen recording of the end-to-end flow) before this section will render. -->
-
-**TODO:** Drop a screen-recording GIF at [`docs/demo.gif`](docs/demo.gif). Until that file exists, the embed below will not render.
-
 ![Demo walkthrough](docs/demo.gif)
 
 No public live demo is linked here — deployment is deliberately deferred (see [Current status](#current-status--roadmap)).
