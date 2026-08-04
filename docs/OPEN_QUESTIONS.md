@@ -1,5 +1,7 @@
 # Open Questions & Deferred Items
 
+> For external readers: this is a living decision log of open items, explicit deferrals with revisit triggers, and resolved debates from active development — not a backlog of unfinished work or a polished FAQ.
+
 *Things that were discussed but explicitly not decided, or decided-with-a-stated-trigger-to-revisit. Distinct from `product_discovery_summary.md`'s "Deferred Features" table, which covers product-scope decisions — this file covers architecture/implementation-level items that came up while designing the backend.*
 
 ---
@@ -22,6 +24,8 @@ v1 ships refresh tokens as plain JSON in the request/response body — not as an
 
 ### Login rate-limiting / brute-force protection
 Not implemented. `/auth/login` and `/auth/signup` currently accept unbounded attempts. Named here so the gap is explicit rather than a silent omission (same documentation pattern as Redis and Gmail OAuth). Stated trigger to revisit: before any real deployment beyond personal use.
+
+**Update (public README / resume-readiness session):** A public-facing root `README.md` was added this session. Live / public deployment was explicitly considered in that pass and **deliberately deferred** until this gap is closed — a public link would expose unbounded auth-abuse attempts and unbounded LLM-cost spend (extract / match / generate / eval) with no rate controls, which isn't worth it yet. That is this entry's existing trigger condition being actively evaluated, not a new decision.
 
 ### Upload body-size enforcement (app-level check vs. transport-level limit)
 The 2MB cap in `create_resume_from_upload` runs *after* Starlette has already fully received and spooled the multipart body — it stops an oversized file from being parsed/persisted, but not the cost of receiving it. No ASGI-level body-size middleware or reverse-proxy limit (e.g. nginx's `client_max_body_size`) exists yet. Named here so the gap is explicit rather than a silent omission (same pattern as login rate-limiting). Stated trigger to revisit: before any real deployment beyond personal use, or whenever a reverse proxy is introduced.

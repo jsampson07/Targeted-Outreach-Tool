@@ -1,5 +1,7 @@
 # Targeted Outreach Tool — Product Discovery Summary
 
+> For external readers: this is the locked product-scope and rationale document from active development — MVP boundaries, deferred features, and roadmap — not a marketing brief or finished product spec.
+
 *A reference document for scope, decisions, and rationale — built to be re-read throughout development and referenced in interviews.*
 
 ---
@@ -74,6 +76,7 @@ Given just a company and a role, the tool:
 | `SEARCHES` table (per-search contact ranking/tier + user-scoped search history) | Deferred until actually needed. Would capture, per search, why a contact ranked where it did for that specific role (distinct from the contact's stable, search-independent `confidence_score`), and would also enable layering user-scoped history on top of the shared `COMPANIES`/`CONTACTS` cache later without touching that cache's design. |
 | Live typeahead company search (debounced, real-time suggestions as the user types) | v1 ships on-submit only — same lookup, same result UI, one call per search. Live typeahead needs debounce timing and request-race handling (a slower in-flight response for an earlier keystroke arriving after a newer one) that on-submit avoids entirely, and Clearbit's real rate limits are still unverified. Purely a frontend upgrade later, isolated from backend/schema. |
 | Refresh-token rotation and reuse-detection | v1 ships access + refresh tokens without rotation (see tech-stack "Auth" decision below and `OPEN_QUESTIONS.md`'s "Resolved" section). The refresh token is DB-backed and revocable from day one specifically so rotation/reuse-detection can be added later as a purely additive change — mark the old row revoked, insert a new one — rather than a retrofit. Revisit only if session-hijacking risk becomes a real concern worth the added complexity. |
+| Public / live deployment | Deliberately deferred while preparing a public-facing root README for resume/LinkedIn. A live link would expose unbounded login/signup attempts and unbounded LLM-cost spend with no rate controls. Revisit only after the login rate-limiting gap (and related abuse/cost controls) in `OPEN_QUESTIONS.md` is closed — that entry's existing trigger condition, actively evaluated this session, not a new decision. |
 
 ---
 
