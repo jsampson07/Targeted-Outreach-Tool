@@ -8,10 +8,19 @@ export type ExperienceEntry = {
   bullet_points: string[]
 }
 
+export type ProjectEntry = {
+  name: string
+  description: string | null
+  technologies: string[]
+  bullet_points: string[]
+}
+
 export type ResumeExtraction = {
   skills: string[]
   experience: ExperienceEntry[]
   education: string[]
+  candidate_name: string | null
+  projects: ProjectEntry[]
 }
 
 export type ResumeOut = {
