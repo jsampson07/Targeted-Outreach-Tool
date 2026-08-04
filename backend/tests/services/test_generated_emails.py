@@ -368,6 +368,73 @@ def test_regeneration_inserts_second_row(
     assert {rows[0].id, rows[1].id} == {first.id, second.id}
 
 
+def test_strip_trailing_closing_no_closing_unchanged():
+    body = "Hi Jordan,\n\nWould you be open to a brief chat?"
+    assert (
+        generated_emails_service._strip_trailing_closing(body, "Jane Doe")
+        == body
+    )
+
+
+def test_strip_trailing_closing_standalone_best():
+    body = "Hi Jordan,\n\nWould you be open to a brief chat?\n\nBest,"
+    assert (
+        generated_emails_service._strip_trailing_closing(body, "Jane Doe")
+        == "Hi Jordan,\n\nWould you be open to a brief chat?"
+    )
+
+
+def test_strip_trailing_closing_phrase_plus_candidate_name():
+    body = (
+        "Hi Jordan,\n\nWould you be open to a brief chat?\n\n"
+        "Best regards,\nJane Doe"
+    )
+    assert (
+        generated_emails_service._strip_trailing_closing(body, "Jane Doe")
+        == "Hi Jordan,\n\nWould you be open to a brief chat?"
+    )
+
+
+def test_strip_trailing_closing_mid_sentence_thanks_not_stripped():
+    body = (
+        "Hi Jordan,\n\nThanks for your time and consideration."
+    )
+    assert (
+        generated_emails_service._strip_trailing_closing(body, "Jane Doe")
+        == body
+    )
+
+
+def test_strip_trailing_closing_mid_sentence_regards_not_stripped():
+    body = (
+        "Hi Jordan,\n\nI wanted to share my regards for the team's work."
+    )
+    assert (
+        generated_emails_service._strip_trailing_closing(body, "Jane Doe")
+        == body
+    )
+
+
+@pytest.mark.parametrize(
+    "closing_line",
+    [
+        "Best regards",
+        "BEST,",
+        "Sincerely.",
+        "warm regards,",
+        "Kind Regards.",
+        "thanks",
+        "Thank you,",
+    ],
+)
+def test_strip_trailing_closing_case_and_punctuation_variants(closing_line: str):
+    body = f"Hi Jordan,\n\nWould you be open to a brief chat?\n\n{closing_line}"
+    assert (
+        generated_emails_service._strip_trailing_closing(body, None)
+        == "Hi Jordan,\n\nWould you be open to a brief chat?"
+    )
+
+
 def test_signature_appends_candidate_name(
     db_session: Session, monkeypatch: pytest.MonkeyPatch
 ):
@@ -419,13 +486,67 @@ def test_signature_omits_name_when_candidate_name_none(
     assert row.body.count("Best regards,") == 1
 
 
+def test_signature_strips_model_closing_before_append(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+):
+    """Model-authored 'Best,' is stripped so only the programmatic signature remains."""
+    draft_with_closing = EmailDraft(
+        subject=_EMAIL_DRAFT.subject,
+        body=f"{_EMAIL_DRAFT.body}\n\nBest,",
+    )
+    monkeypatch.setattr(
+        generated_emails_service,
+        "generate_match_data",
+        AsyncMock(return_value=_MATCH_DATA),
+    )
+    monkeypatch.setattr(
+        generated_emails_service,
+        "generate_email",
+        AsyncMock(return_value=draft_with_closing),
+    )
+    monkeypatch.setattr(
+        generated_emails_service,
+        "evaluate_with_retry",
+        AsyncMock(return_value=(draft_with_closing, _EVAL_RESULT)),
+    )
+
+    user = _user(db_session, "gen-sig-strip@example.com")
+    company = _company(db_session, domain="acme-sig-strip.test")
+    contact = _contact(db_session, company)
+    extraction = _RESUME_EXTRACTION.model_copy(
+        update={"candidate_name": "Jane Doe"}
+    )
+    resume = Resume(
+        user_id=user.id,
+        raw_text="Jane Doe Python engineer with API experience.",
+        extracted_data=extraction.model_dump(),
+    )
+    db_session.add(resume)
+    db_session.flush()
+    jd = _jd(db_session, user, company)
+
+    row = asyncio.run(
+        generated_emails_service.generate_and_persist_email(
+            db_session, user, contact.id, resume.id, jd.id
+        )
+    )
+
+    assert row.body == f"{_EMAIL_DRAFT.body}\n\nBest regards,\nJane Doe"
+    assert row.body.count("Best regards,") == 1
+    assert "\nBest,\n" not in row.body
+    assert not row.body.startswith("Best,")
+
+
 def test_signature_appended_once_after_refine_pass(
     db_session: Session, monkeypatch: pytest.MonkeyPatch
 ):
-    """Signature is post-eval only — refine inside evaluate_with_retry must not double it."""
+    """Strip + signature run once on the final draft — not on intermediate refine attempts."""
     refined = EmailDraft(
         subject="Refined subject",
-        body="Hi Jordan,\n\nRevised body after gate feedback.",
+        body=(
+            "Hi Jordan,\n\nRevised body after gate feedback.\n\n"
+            "Best,\nAlex Rivera"
+        ),
     )
     monkeypatch.setattr(
         generated_emails_service,
@@ -470,3 +591,4 @@ def test_signature_appended_once_after_refine_pass(
     )
     assert row.body.count("Best regards,") == 1
     assert row.body.count("Alex Rivera") == 1
+    assert row.body.count("Best,") == 0
