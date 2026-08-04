@@ -475,6 +475,7 @@ describe('HomePage discovery flow', () => {
     const extracted = {
       ...uploaded,
       extracted_data: {
+        candidate_name: 'Jane Doe',
         skills: ['Python', 'FastAPI'],
         experience: [
           {
@@ -483,6 +484,14 @@ describe('HomePage discovery flow', () => {
             start_date: '2022',
             end_date: null,
             bullet_points: ['Built APIs'],
+          },
+        ],
+        projects: [
+          {
+            name: 'Outreach Tool',
+            description: 'Personal cold-email helper',
+            technologies: ['React', 'Postgres'],
+            bullet_points: ['Structured LLM extraction'],
           },
         ],
         education: ['BS CS'],
@@ -517,9 +526,15 @@ describe('HomePage discovery flow', () => {
     )
 
     expect(await screen.findByText('Extracted resume')).toBeInTheDocument()
+    expect(screen.getByText('Candidate name')).toBeInTheDocument()
+    expect(screen.getByText('Jane Doe')).toBeInTheDocument()
     expect(screen.getByText('Python')).toBeInTheDocument()
     expect(screen.getByText('FastAPI')).toBeInTheDocument()
     expect(screen.getByText(/Engineer · Acme/)).toBeInTheDocument()
+    expect(screen.getByText('Outreach Tool')).toBeInTheDocument()
+    expect(screen.getByText('Personal cold-email helper')).toBeInTheDocument()
+    expect(screen.getByText('React, Postgres')).toBeInTheDocument()
+    expect(screen.getByText('Structured LLM extraction')).toBeInTheDocument()
     expect(screen.getByText('BS CS')).toBeInTheDocument()
     expect(
       screen.getByRole('button', { name: /continue to job description/i }),
@@ -547,8 +562,10 @@ describe('HomePage discovery flow', () => {
       user_id: 1,
       raw_text: 'Jane Doe',
       extracted_data: {
+        candidate_name: 'Jane Doe',
         skills: ['Python'],
         experience: [],
+        projects: [],
         education: [],
       },
       created_at: '2026-08-03T00:00:00Z',
@@ -635,8 +652,10 @@ describe('HomePage discovery flow', () => {
           user_id: 1,
           raw_text: 'Jane',
           extracted_data: {
+            candidate_name: 'Jane Doe',
             skills: ['TypeScript'],
             experience: [],
+            projects: [],
             education: [],
           },
           created_at: '2026-08-03T00:00:00Z',
@@ -649,6 +668,7 @@ describe('HomePage discovery flow', () => {
 
     expect(screen.getByText('Extracted resume')).toBeInTheDocument()
     expect(screen.getByText('TypeScript')).toBeInTheDocument()
+    expect(screen.getByText('No projects extracted.')).toBeInTheDocument()
     expect(screen.queryByText('Alex Recruiter')).not.toBeInTheDocument()
     expect(fetch).not.toHaveBeenCalled()
   })
@@ -664,8 +684,10 @@ describe('HomePage discovery flow', () => {
           user_id: 1,
           raw_text: 'Jane',
           extracted_data: {
+            candidate_name: 'Jane Doe',
             skills: ['Python'],
             experience: [],
+            projects: [],
             education: [],
           },
           created_at: '2026-08-03T00:00:00Z',
@@ -752,8 +774,10 @@ describe('HomePage discovery flow', () => {
       user_id: 1,
       raw_text: 'Jane',
       extracted_data: {
+        candidate_name: 'Jane Doe',
         skills: ['Python'],
         experience: [],
+        projects: [],
         education: [],
       },
       created_at: '2026-08-03T00:00:00Z',

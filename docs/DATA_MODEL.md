@@ -58,15 +58,25 @@ class ExperienceEntry(BaseModel):
     end_date: str | None
     bullet_points: list[str]
 
+class ProjectEntry(BaseModel):
+    name: str
+    description: str | None = None
+    technologies: list[str] = []
+    bullet_points: list[str] = []
+
 class ResumeExtraction(BaseModel):
     skills: list[str]
     experience: list[ExperienceEntry]
     education: list[str]
+    candidate_name: str | None = None
+    projects: list[ProjectEntry] = []
 ```
 
 **Assumption:** File parsing (PDF/docx → text) happens in the router/service before `ResumeCreate` is constructed, so this schema only ever handles text, never file bytes — keeping Pydantic's job "validate structured data" rather than "handle file I/O."
 
 **Decision (gap filled):** The HTTP create path is **not** `POST /resumes` with a JSON `ResumeCreate` body. The live router accepts **multipart** `UploadFile` under the form field name `file` (`POST /resumes`), parses PDF/DOCX server-side (pypdf / python-docx), enforces a 2MB cap and a 50-character minimum on extracted text, then builds `ResumeCreate(raw_text=...)` internally before insert. `ResumeCreate` remains the internal/validated text shape; clients that send JSON `{raw_text}` will not match the endpoint. Limits and `user_message` copy are locked in `app/services/resume.py`.
+
+**Decision (revision):** `candidate_name: str | None = None` and `projects: list[ProjectEntry] = []` (with `ProjectEntry`) were added after the original `ResumeExtraction` lock, following real dogfooding: generated emails never cited personal/academic/hackathon project work (no extraction field existed), and sign-offs had no candidate name (same gap). Defaults match the `EvalGates.no_unprompted_gap_admission` pattern so pre-existing `extracted_data` JSONB rows without these keys still deserialize without error. `candidate_name` is extracted from resume text (header/contact block), not a dedicated `USERS` profile field — see `OPEN_QUESTIONS.md`. `projects` are distinct from formal `experience` roles; work already presented inside a job entry should not be duplicated.
 
 ### 2.3 JOB_DESCRIPTIONS
 

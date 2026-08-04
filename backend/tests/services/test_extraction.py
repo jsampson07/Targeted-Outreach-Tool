@@ -13,7 +13,8 @@ from app.models.job_description import JobDescription
 from app.models.resume import Resume
 from app.models.user import User
 from app.schemas.job_description import JDExtraction
-from app.schemas.resume import ExperienceEntry, ResumeExtraction
+from app.llm.prompts import resume_extraction_prompt
+from app.schemas.resume import ExperienceEntry, ProjectEntry, ResumeExtraction
 from app.services import extraction as extraction_service
 
 
@@ -143,6 +144,110 @@ def test_extract_resume_overwrites_extracted_data(db_session: Session):
 
     assert updated.extracted_data == _RESUME_EXTRACTION.model_dump()
     assert updated.extracted_data["skills"] == ["Python"]
+
+
+def test_resume_extraction_defaults_absent_candidate_name_and_projects():
+    """Pre-existing JSONB rows without the new keys still deserialize."""
+    parsed = ResumeExtraction.model_validate(
+        {
+            "skills": ["Python"],
+            "experience": [],
+            "education": ["BS CS"],
+        }
+    )
+    assert parsed.candidate_name is None
+    assert parsed.projects == []
+
+
+def test_resume_extraction_accepts_candidate_name_and_projects():
+    parsed = ResumeExtraction.model_validate(
+        {
+            "candidate_name": "Jane Doe",
+            "skills": ["Python"],
+            "experience": [],
+            "education": [],
+            "projects": [
+                {
+                    "name": "Side Project",
+                    "description": "A personal API",
+                    "technologies": ["FastAPI"],
+                    "bullet_points": ["Shipped a demo"],
+                }
+            ],
+        }
+    )
+    assert parsed.candidate_name == "Jane Doe"
+    assert len(parsed.projects) == 1
+    assert parsed.projects[0] == ProjectEntry(
+        name="Side Project",
+        description="A personal API",
+        technologies=["FastAPI"],
+        bullet_points=["Shipped a demo"],
+    )
+
+
+def test_resume_extraction_prompt_covers_candidate_name_and_projects():
+    prompt = resume_extraction_prompt("Jane Doe\nProjects\n- Outreach Tool")
+    assert "candidate_name" in prompt
+    assert "first and last name" in prompt
+    assert "projects" in prompt
+    assert "do not duplicate the same work" in prompt
+
+
+def test_extract_resume_persists_candidate_name_and_projects(
+    db_session: Session,
+):
+    extraction = ResumeExtraction(
+        candidate_name="Jane Doe",
+        skills=["Python"],
+        experience=[],
+        education=["BS CS"],
+        projects=[
+            ProjectEntry(
+                name="Outreach Tool",
+                description="Personal helper",
+                technologies=["React"],
+                bullet_points=["Built extract UI"],
+            )
+        ],
+    )
+    user = _user(db_session, "extract-resume-projects@example.com")
+    resume = _resume(db_session, user)
+    llm = _mock_llm(extraction)
+
+    updated = asyncio.run(
+        extraction_service.extract_resume(
+            db_session, resume.id, user.id, llm_client=llm
+        )
+    )
+
+    assert updated.extracted_data == extraction.model_dump()
+    assert updated.extracted_data["candidate_name"] == "Jane Doe"
+    assert updated.extracted_data["projects"][0]["name"] == "Outreach Tool"
+
+
+def test_extract_resume_persists_null_candidate_name_and_empty_projects(
+    db_session: Session,
+):
+    extraction = ResumeExtraction(
+        candidate_name=None,
+        skills=["Python"],
+        experience=[],
+        education=[],
+        projects=[],
+    )
+    user = _user(db_session, "extract-resume-no-name@example.com")
+    resume = _resume(db_session, user)
+    llm = _mock_llm(extraction)
+
+    updated = asyncio.run(
+        extraction_service.extract_resume(
+            db_session, resume.id, user.id, llm_client=llm
+        )
+    )
+
+    assert updated.extracted_data["candidate_name"] is None
+    assert updated.extracted_data["projects"] == []
 
 
 def test_extract_jd_happy_path(db_session: Session):

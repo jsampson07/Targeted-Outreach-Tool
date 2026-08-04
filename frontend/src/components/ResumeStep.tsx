@@ -14,6 +14,17 @@ function ExtractionSummary({ data }: { data: ResumeExtraction }) {
       <h2 className="discovery-subhead">Extracted resume</h2>
 
       <div className="extraction-block">
+        <h3>Candidate name</h3>
+        {data.candidate_name ? (
+          <p>{data.candidate_name}</p>
+        ) : (
+          <p className="discovery-muted">
+            No candidate name extracted — emails will sign off without a name.
+          </p>
+        )}
+      </div>
+
+      <div className="extraction-block">
         <h3>Skills</h3>
         {data.skills.length > 0 ? (
           <ul className="extraction-list">
@@ -52,6 +63,36 @@ function ExtractionSummary({ data }: { data: ResumeExtraction }) {
           </ul>
         ) : (
           <p className="discovery-muted">No experience extracted.</p>
+        )}
+      </div>
+
+      <div className="extraction-block">
+        <h3>Projects</h3>
+        {data.projects.length > 0 ? (
+          <ul className="experience-list">
+            {data.projects.map((entry, index) => (
+              <li key={`${entry.name}-${index}`}>
+                <p className="experience-heading">{entry.name}</p>
+                {entry.description ? (
+                  <p className="discovery-muted">{entry.description}</p>
+                ) : null}
+                {entry.technologies.length > 0 ? (
+                  <p className="discovery-muted">
+                    {entry.technologies.join(', ')}
+                  </p>
+                ) : null}
+                {entry.bullet_points.length > 0 ? (
+                  <ul className="extraction-list">
+                    {entry.bullet_points.map((bullet, i) => (
+                      <li key={i}>{bullet}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="discovery-muted">No projects extracted.</p>
         )}
       </div>
 
@@ -99,8 +140,9 @@ export function ResumeStep({ resumeForGeneration, onContinue }: Props) {
   return (
     <section aria-label="Resume upload">
       <p className="discovery-lead">
-        Upload your resume (PDF or DOCX, max 2MB). We&apos;ll extract skills,
-        experience, and education for the outreach draft.
+        Upload your resume (PDF or DOCX, max 2MB). We&apos;ll extract your
+        name, skills, experience, projects, and education for the outreach
+        draft.
       </p>
       <form className="auth-form" onSubmit={handleSubmit}>
         <label>
