@@ -24,6 +24,93 @@ from app.services.email_generation import generate_email
 from app.services.eval import evaluate_with_retry
 from app.services.matching import generate_match_data
 
+# Standalone valediction phrases only — matched against a whole line after
+# trimming whitespace and a single trailing comma/period. Substrings inside
+# a longer sentence (e.g. "Thanks for your time.") must not match.
+_CLOSING_PHRASES = frozenset(
+    {
+        "best",
+        "best regards",
+        "sincerely",
+        "regards",
+        "warm regards",
+        "kind regards",
+        "warmly",
+        "thank you",
+        "thanks",
+    }
+)
+
+
+def _is_closing_line(line: str) -> bool:
+    """True when ``line`` is a standalone closing phrase (not a sentence)."""
+    s = line.strip()
+    if s.endswith(",") or s.endswith("."):
+        s = s[:-1]
+    return s.strip().lower() in _CLOSING_PHRASES
+
+
+def _strip_trailing_closing(body: str, candidate_name: str | None) -> str:
+    """Remove a model-authored trailing sign-off before the programmatic append.
+
+    Conservative: only the last 1–3 non-blank lines are considered, and a line
+    is stripped only when it is an exact standalone valediction (optionally
+    followed by a line equal to ``candidate_name``). Mid-sentence uses of
+    "thanks"/"regards" are left alone.
+    """
+    lines = body.split("\n")
+
+    end = len(lines) - 1
+    while end >= 0 and lines[end].strip() == "":
+        end -= 1
+    if end < 0:
+        return body
+
+    # Last 1–3 non-blank line indices, bottom-to-top.
+    window: list[int] = []
+    j = end
+    while j >= 0 and len(window) < 3:
+        if lines[j].strip() != "":
+            window.append(j)
+        j -= 1
+
+    strip: set[int] = set()
+    idx = 0
+    while idx < len(window):
+        line_i = window[idx]
+        line = lines[line_i]
+
+        # window[0] is always the body's last non-blank line (from `end`), so a
+        # trailing name-after-closing is always caught by the name-first branch
+        # below — a forward "after" lookahead here would only ever see blanks.
+        if _is_closing_line(line):
+            strip.add(line_i)
+            idx += 1
+            continue
+
+        if (
+            candidate_name is not None
+            and line.strip().lower() == candidate_name.strip().lower()
+            and idx + 1 < len(window)
+        ):
+            prev_i = window[idx + 1]
+            if _is_closing_line(lines[prev_i]) and line_i == prev_i + 1:
+                strip.add(line_i)
+                strip.add(prev_i)
+                idx += 2
+                continue
+
+        # First non-matching line from the bottom — stop.
+        break
+
+    if not strip:
+        return body
+
+    new_lines = [ln for i, ln in enumerate(lines) if i not in strip]
+    while new_lines and new_lines[-1].strip() == "":
+        new_lines.pop()
+    return "\n".join(new_lines)
+
 
 def get_generated_email_by_id(
     db: Session, user: User, generated_email_id: int
@@ -133,15 +220,19 @@ async def generate_and_persist_email(
         jd.role_title,
     )
 
-    # Signature is appended after evaluation so the judge never grades it.
-    # Generation/refine prompts forbid model-authored closings for the same reason.
+    # Strip any model-authored trailing sign-off the prompts failed to prevent,
+    # then append the deterministic signature. Both steps run only on the final
+    # draft after evaluate_with_retry — the judge still sees raw model output.
+    cleaned_body = _strip_trailing_closing(
+        final_email.body, resume_extraction.candidate_name
+    )
     if resume_extraction.candidate_name:
         body = (
-            f"{final_email.body}\n\nBest regards,\n"
+            f"{cleaned_body}\n\nBest regards,\n"
             f"{resume_extraction.candidate_name}"
         )
     else:
-        body = f"{final_email.body}\n\nBest regards,"
+        body = f"{cleaned_body}\n\nBest regards,"
 
     dims = eval_result.dimensions
     eval_score = (

@@ -1,6 +1,6 @@
 # Progress Snapshot
 
-*Overwritten each session, not appended to. Reflects verified state as of the session ending 2026-08-03 — resume `candidate_name` + `projects` extraction, matching evidence instruction, and post-eval deterministic signature append.*
+*Overwritten each session, not appended to. Reflects verified state as of the session ending 2026-08-03 — deterministic strip of model-authored trailing email closings before programmatic signature append.*
 
 ---
 
@@ -8,12 +8,13 @@
 
 ### Verified working (functionally exercised, not just present)
 
-- **Resume projects + signature name (this session):**
-  - **Root cause (dogfooding):** Generated emails never cited personal/academic/hackathon projects and signed off with no name — both were `ResumeExtraction` schema gaps (skills/experience/education only), not generation-prompt bugs.
-  - **Schema:** `candidate_name: str | None = None`, `ProjectEntry`, `projects: list[ProjectEntry] = []` on `ResumeExtraction` — defaults so pre-existing `extracted_data` JSONB still deserializes (same pattern as `EvalGates.no_unprompted_gap_admission`).
-  - **Prompts:** extraction rules for name + projects (with experience/project ambiguity guidance); matching explicitly treats `projects` as valid `resume_evidence` / strengths; generation + refine forbid model-authored sign-offs.
-  - **Orchestration:** after `evaluate_with_retry`, append `"\n\nBest regards,\n{name}"` or `"\n\nBest regards,"` before persist — judge never sees the signature.
-  - **FRAME 4:** renders `candidate_name` (correctness: wrong name → wrong signed email) and `projects`.
+- **Strip model-authored trailing closing (this session):**
+  - **Root cause (dogfooding):** Generation/refine prompts forbid sign-offs, but `claude-haiku-4-5` does not reliably obey that negative instruction. A model-written `"Best,"` stacked with the programmatic `"Best regards,\n{name}"` — a broken double closing in copy-paste output.
+  - **Fix:** `_strip_trailing_closing` in `generated_emails.py` runs after `evaluate_with_retry` returns and before the existing signature append. Judge still sees raw model output.
+  - **Detection (conservative):** last 1–3 non-blank lines only; exact standalone valediction match after trimming one trailing comma/period; optional following `candidate_name` line also stripped. Mid-sentence "thanks"/"regards" left alone.
+  - **Rejected alternative:** fourth eval hard gate — probabilistic retry via the same model; strip is a guarantee.
+  - **Cleanup:** removed unreachable forward-`after` lookahead from the closing-line branch (`window[0]` is always the last non-blank line, so closing+name is handled by the name-first branch). Full `test_generated_emails.py` re-run; no assertion changes.
+- **Resume projects + signature name (prior session):** `candidate_name` / `projects` on `ResumeExtraction`; matching treats projects as evidence; post-eval signature append; FRAME 4 surfaces name + projects.
 - **Third eval hard gate — no unprompted gap admission (prior session).**
 - **Live mock-mode discovery fixtures (prior session).**
 - **Frontend FRAME 1–6** — discovery → resume/JD extract → generate email, sessionStorage rehydration.
@@ -44,13 +45,14 @@
 7. **`EvalGates.violation_detail`** + **`no_unprompted_gap_admission`** post-lock revisions; Out shapes strip `violation_detail`.
 8. **`generated_emails.py`** is the DB orchestrator; `email_generation.py` stays pure LLM. Always-insert-never-overwrite. `eval_score` = unweighted mean of five dimensions.
 9. **sessionStorage key `discoveryFlow`:** `{ company, discoveryResult, resume, jobDescription, generatedEmail }`.
-10. **This session — `ResumeExtraction` revision:** `candidate_name` + `projects`/`ProjectEntry` with defaults for JSONB backward compat. Deterministic post-eval signature append in `generated_emails.py`; generation/refine prompts forbid model closings. `candidate_name` from resume text (not USERS profile) — see `OPEN_QUESTIONS.md`.
+10. **`ResumeExtraction` revision:** `candidate_name` + `projects`/`ProjectEntry` with defaults for JSONB backward compat. Deterministic post-eval signature append; generation/refine prompts forbid model closings. `candidate_name` from resume text (not USERS profile) — see `OPEN_QUESTIONS.md`.
+11. **This session — model-closing strip:** `_strip_trailing_closing` between `evaluate_with_retry` and signature append. Not a schema change; fourth eval gate explicitly rejected (see `ARCHITECTURE.md` §3 / `OPEN_QUESTIONS.md`).
 
 ---
 
 ## What's next
 
-1. **Manual dogfood** of project citation in match/email and signature name accuracy after re-extracting a real resume.
+1. **Manual dogfood** of generated emails after re-extract — confirm no double closings and project citation / signature name still look right.
 2. **Revisit `candidate_name` source** if mis-extraction shows up often (OPEN_QUESTIONS trigger).
 3. **Stretch — outcome logging / analytics**; deferred providers/auth hardening only if usage demands.
 
@@ -58,36 +60,30 @@
 
 ## Test results (this session — actual suite output)
 
-**Backend** (`pytest -ra` from `backend/`):
+**Backend** (`pytest tests/services/test_generated_emails.py -ra` from `backend/`):
+
+Re-run after dead-branch removal:
 
 ```
-================= 12 failed, 124 passed, 75 warnings in 33.56s =================
+=================== 6 failed, 18 passed, 1 warning in 4.89s ====================
 ```
 
-Failed (investigated — not assumed “unrelated”):
+Failed (pre-existing isolation leak — unchanged by this branch):
 
 | File | Tests | Cause |
 |---|---|---|
-| `test_contact_discovery.py` | 6 | Pre-existing: discover hits cached `Contact` for `acme.com` (scripted Alex Recruiter) so `tier_used` is `None` / confidence assertions miss. Unchanged by this branch. |
-| `test_generated_emails.py` | 6 error-path tests (`wrong_owner_*`, `missing_contact`, `*_missing_extracted_data`, `company_mismatch`) | Pre-existing isolation leak: `assert GeneratedEmail.count() == 0` sees **2 leftover rows** already committed in Postgres. `pytest.raises(...)` still passes (errors raise correctly). Happy path + all 3 new signature tests pass. Not caused by signature append. |
+| `test_generated_emails.py` | 6 error-path tests (`wrong_owner_*`, `missing_contact`, `*_missing_extracted_data`, `company_mismatch`) | `assert GeneratedEmail.count() == 0` sees leftover committed rows. `pytest.raises(...)` still passes. |
 
-New coverage added this session (all passing when run with related files): extraction present/absent `candidate_name`/`projects`, matching project-evidence prompt + pipeline, signature named / None / once-after-refine; email-generation prompt asserts sign-off forbid.
+All strip/signature assertions unchanged and still passing, including closing+name cases: `test_strip_trailing_closing_phrase_plus_candidate_name`, `test_signature_strips_model_closing_before_append`, `test_signature_appended_once_after_refine_pass`.
 
-**Frontend** (`npm run test:run` from `frontend/`):
-
-```
- Test Files  8 passed (8)
-      Tests  45 passed (45)
-```
-
-Addendum: `ResumeStep.test.tsx` covers `candidate_name` present/null, projects present (full fields + sparse empty conditionals), and empty-projects fallback. HomePage full-extract fixture assertions extended for project description / technologies / bullets; FRAME 4 rehydrate asserts `No projects extracted.`
+**Frontend:** not exercised this session (backend-only strip fix).
 
 ---
 
 ## Doc notes from this session
 
-- **`DATA_MODEL.md` §2.2:** `candidate_name` + `ProjectEntry`/`projects` Decision (revision) + backward-compat defaults.
-- **`ARCHITECTURE.md` §3:** post-eval signature append; generation/refine forbid model closings. §8.2.3: FRAME 4 shows name + projects.
-- **`OPEN_QUESTIONS.md`:** resume-text vs USERS-profile decision for `candidate_name` + revisit trigger.
-- **`product_discovery_summary.md`:** not edited — extraction completeness is a DATA_MODEL decision, not an MVP-scope change. (Existing `candidate_name` mentions there refer to `RAW_PROVIDER_RESULTS`, unrelated.)
-- **`PROGRESS.md`:** overwritten for this slice.
+- **`ARCHITECTURE.md` §3:** added follow-up Decision (strip model-authored closing before signature append) — root cause, rejected fourth eval gate, pipeline position relative to `evaluate_with_retry`. Dead-branch cleanup: no edit — wording describes behavior ("a following `candidate_name` line, when present"), not the removed forward-lookahead mechanic.
+- **`OPEN_QUESTIONS.md`:** new Resolved entry for model-authored closing stacked with programmatic signature. Dead-branch cleanup: no edit — entry is implementation-detail-light.
+- **`PROGRESS.md`:** overwritten for this slice; amended for dead-branch removal + re-run results.
+- **`product_discovery_summary.md`:** not edited — implementation-level bug fix / internal cleanup, not an MVP-scope or roadmap change.
+- **`DATA_MODEL.md`:** not edited — no schema/column change.
