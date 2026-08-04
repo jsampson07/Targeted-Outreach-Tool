@@ -1,5 +1,7 @@
 # Data Model Reference
 
+> For external readers: this is a living schema and Pydantic-shape decision log from active development — entity-by-entity rationale and migration conventions, not a frozen ERD handout.
+
 *Companion to `product_discovery_summary.md`, which locks the 9 core entities and their relationships, and to `ARCHITECTURE.md`. This document covers how those entities are expressed as Pydantic schemas and how the first Alembic migration is structured.*
 
 ---

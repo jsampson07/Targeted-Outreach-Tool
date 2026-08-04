@@ -1,5 +1,7 @@
 # Architecture Reference
 
+> For external readers: this is a living decision log of architectural and implementation choices from active development — organized by topic with alternatives considered, not a finished system design doc.
+
 *Companion to `product_discovery_summary.md`, which remains the source of truth for product scope, MVP feature set, tech stack, and the eval rubric. This document covers the architectural and implementation decisions made when translating that scope into a concrete backend design. Organized by topic, not by when each decision was made.*
 
 ---

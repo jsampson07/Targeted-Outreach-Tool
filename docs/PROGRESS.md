@@ -1,6 +1,8 @@
 # Progress Snapshot
 
-*Overwritten each session, not appended to. Reflects verified state as of the session ending 2026-08-04 — second dogfooding catch on model-authored closing strip; anchor-then-sweep replaces consecutive bottom-up walk.*
+> For external readers: this is a living, session-overwritten implementation snapshot from active development — verified against the codebase each session, not a polished changelog or finished status report.
+
+*Overwritten each session, not appended to. Reflects verified state as of the session ending 2026-08-04 — public README + light external-reader header pass on engineering docs; no code or schema changes.*
 
 ---
 
@@ -8,12 +10,9 @@
 
 ### Verified working (functionally exercised, not just present)
 
-- **Anchor-then-sweep closing strip (this session — dogfood round 2):**
-  - **Root cause:** Round-1 consecutive bottom-up walk stopped at the first non-matching bottom line. Real body `"Thanks,\nLooking forward to hearing from you."` left both lines intact; programmatic `"Best regards,\n{name}"` stacked again. Same problem class as round 1, found via continued personal use — the "real outcome data" differentiator doing real work, not just a talking point.
-  - **Fix:** `_strip_trailing_closing` now finds the earliest `_is_closing_line` match in the last ≤3 non-blank window and sweeps from that anchor through end of body. Bare-`candidate_name` last line is a fallback anchor. `_is_closing_line` unchanged. Wiring (once, after `evaluate_with_retry`, before signature append) unchanged.
-  - **Rejected:** expanding the closing-phrase list to cover trailing prose — whack-a-mole (same reasoning as rejecting a fixed enum for `EvalGates.violation_detail`).
-- **Strip model-authored trailing closing (prior session — dogfood round 1):** deterministic strip before signature append; fourth eval gate rejected.
-- **Resume projects + signature name; third eval hard gate; live mock discovery fixtures.**
+- **Public root README (this session — docs only):** `/README.md` for recruiters/engineers; claims spot-checked against routers/services (auth, company search, contact discovery, resumes, JDs, generated emails) and frontend FRAME 1–6. Demo GIF is a placeholder (`docs/demo.gif` not yet added). No live deploy link — deferred on purpose.
+- **Anchor-then-sweep closing strip (prior — dogfood round 2):** `_strip_trailing_closing` finds earliest `_is_closing_line` in last ≤3 non-blank window and sweeps from that anchor; bare-`candidate_name` fallback. Wiring unchanged (after `evaluate_with_retry`, before signature append).
+- **Strip model-authored trailing closing (dogfood round 1);** resume projects + signature name; third eval hard gate; live mock discovery fixtures.
 - **Frontend FRAME 1–6**; **`GET /generated-emails/{id}`**, **`GET /job-descriptions/{jd_id}`**, auth, Postgres, Alembic (9 tables), Hunter/Mock discovery, LLM extraction/matching/generation/eval.
 
 ### Present, but not yet exercised by anything
@@ -21,10 +20,11 @@
 - **`POST /contacts/discover` HTTP path** — mounted; no dedicated router TestClient suite.
 - **`POST /auth/refresh`** — backend exists; frontend does not call it on 401.
 - **GET-by-id refetch paths** — available; flow rehydrates from sessionStorage instead.
+- **`OUTCOMES` model / schemas** — table exists; no outcomes router or UI yet.
 
 ### Not started
 
-- **Outcome logging**, **analytics view**, **Apollo/Anymail providers**, **refresh-token rotation / cookie transport / rate-limiting**, **`GENERATED_EMAILS.user_id` denormalization**, **resume picker reuse**, **regenerate-email control**.
+- **Outcome logging**, **analytics view**, **Apollo/Anymail providers**, **refresh-token rotation / cookie transport / rate-limiting**, **public/live deployment**, **`GENERATED_EMAILS.user_id` denormalization**, **resume picker reuse**, **regenerate-email control**.
 
 ---
 
@@ -48,36 +48,24 @@
 
 ## What's next
 
-1. **Manual dogfood** of generated emails after this strip fix — confirm stacked closings / trailing-sentence-after-Thanks cases are gone.
-2. **Revisit `candidate_name` source** if mis-extraction shows up often (OPEN_QUESTIONS trigger).
-3. **Stretch — outcome logging / analytics**; deferred providers/auth hardening only if usage demands.
+1. **Manual dogfood** of generated emails after the strip fix — confirm stacked closings / trailing-sentence-after-Thanks cases are gone.
+2. **Add `docs/demo.gif`** so the README Demo section renders.
+3. **Revisit `candidate_name` source** if mis-extraction shows up often (OPEN_QUESTIONS trigger).
+4. **Stretch — outcome logging / analytics**; rate-limiting before any public deploy; deferred providers/auth hardening only if usage demands.
 
 ---
 
 ## Test results (this session — actual suite output)
 
-**Backend** (`pytest tests/services/test_generated_emails.py -ra` from `backend/`):
-
-```
-=================== 6 failed, 22 passed, 1 warning in 4.87s ====================
-```
-
-Failed (pre-existing isolation leak — unchanged by this branch):
-
-| File | Tests | Cause |
-|---|---|---|
-| `test_generated_emails.py` | 6 error-path tests (`wrong_owner_*`, `missing_contact`, `*_missing_extracted_data`, `company_mismatch`) | `assert GeneratedEmail.count() == 0` sees leftover committed rows. `pytest.raises(...)` still passes. |
-
-All prior strip/signature assertions still passing, plus 4 new strip cases: `test_strip_trailing_closing_phrase_then_trailing_sentence`, `test_strip_trailing_closing_stacked_closings_plus_name`, `test_strip_trailing_closing_bare_candidate_name`, `test_strip_trailing_closing_anchor_not_bottom_most_sweeps_to_end`.
-
-**Frontend:** not exercised this session (backend-only strip algorithm change).
+**No test suite run this session** — documentation-only changes (README + engineering-doc headers / deferral notes). Prior session strip-suite status unchanged: backend strip/signature tests passing with known pre-existing isolation leak on 6 error-path count assertions in `test_generated_emails.py`.
 
 ---
 
 ## Doc notes from this session
 
-- **`ARCHITECTURE.md` §3:** Decision (strip model-authored closing…) updated to describe anchor-then-sweep; round-2 root cause and why phrase-list expansion was rejected (whack-a-mole / same as `violation_detail` enum rejection).
-- **`OPEN_QUESTIONS.md`:** existing Resolved entry amended with linked dogfooding round-2 finding — not a duplicate entry.
-- **`PROGRESS.md`:** overwritten for this slice.
-- **`product_discovery_summary.md`:** no change needed — implementation-level bug fix, not MVP-scope or roadmap.
-- **`DATA_MODEL.md`:** no change needed — no schema/column change.
+- **`README.md` (new):** Public-facing root README — pitch, problem, GIF placeholder, technical substance teaser, stack, Mermaid pipeline, local setup (mock-first discovery), honest status/roadmap, links to engineering docs. Claims verified against `app/routers/` + `app/services/` + frontend FRAME components; no invented metrics or live demo URL.
+- **`OPEN_QUESTIONS.md`:** external-reader header added; existing "Login rate-limiting / brute-force protection" entry amended (not duplicated) — public README added, live deploy deliberately deferred until this gap closes (trigger actively evaluated).
+- **`product_discovery_summary.md`:** external-reader header added; one new Deferred Features row — "Public / live deployment" (rate-limiting / LLM-cost exposure; points to `OPEN_QUESTIONS.md`).
+- **`PROGRESS.md`:** overwritten for this docs session.
+- **`ARCHITECTURE.md`:** external-reader header only — no content/decision changes (setup steps live in root README + `backend/.env.example`; nothing new to lock here).
+- **`DATA_MODEL.md`:** external-reader header only — no schema/decision changes.
