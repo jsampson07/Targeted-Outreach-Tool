@@ -435,6 +435,51 @@ def test_strip_trailing_closing_case_and_punctuation_variants(closing_line: str)
     )
 
 
+def test_strip_trailing_closing_phrase_then_trailing_sentence():
+    """Valediction followed by non-name prose — both stripped (dogfood round 2)."""
+    body = (
+        "Hi Jordan,\n\nWould you have time for a brief call next week?\n\n"
+        "Thanks,\nLooking forward to hearing from you."
+    )
+    assert (
+        generated_emails_service._strip_trailing_closing(body, "Jane Doe")
+        == "Hi Jordan,\n\nWould you have time for a brief call next week?"
+    )
+
+
+def test_strip_trailing_closing_stacked_closings_plus_name():
+    body = (
+        "Hi Jordan,\n\nWould you be open to a brief chat?\n\n"
+        "Thanks,\nBest,\nJane Doe"
+    )
+    assert (
+        generated_emails_service._strip_trailing_closing(body, "Jane Doe")
+        == "Hi Jordan,\n\nWould you be open to a brief chat?"
+    )
+
+
+def test_strip_trailing_closing_bare_candidate_name():
+    body = (
+        "Hi Jordan,\n\nWould you be open to a brief chat?\n\nJane Doe"
+    )
+    assert (
+        generated_emails_service._strip_trailing_closing(body, "Jane Doe")
+        == "Hi Jordan,\n\nWould you be open to a brief chat?"
+    )
+
+
+def test_strip_trailing_closing_anchor_not_bottom_most_sweeps_to_end():
+    """Closing phrase mid-window with a short trailing sentence below it."""
+    body = (
+        "Hi Jordan,\n\nExcited about the Backend Engineer role.\n\n"
+        "Best regards,\nHope to connect soon."
+    )
+    assert (
+        generated_emails_service._strip_trailing_closing(body, "Jane Doe")
+        == "Hi Jordan,\n\nExcited about the Backend Engineer role."
+    )
+
+
 def test_signature_appends_candidate_name(
     db_session: Session, monkeypatch: pytest.MonkeyPatch
 ):
