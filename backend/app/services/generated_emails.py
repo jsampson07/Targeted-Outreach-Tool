@@ -53,9 +53,10 @@ def _is_closing_line(line: str) -> bool:
 def _strip_trailing_closing(body: str, candidate_name: str | None) -> str:
     """Remove a model-authored trailing sign-off before the programmatic append.
 
-    Conservative: only the last 1–3 non-blank lines are considered, and a line
-    is stripped only when it is an exact standalone valediction (optionally
-    followed by a line equal to ``candidate_name``). Mid-sentence uses of
+    Conservative: only the last 1–3 non-blank lines are searched for an
+    anchor. Prefer the earliest standalone valediction match in that window,
+    then sweep from the anchor through the end of the body (including any
+    trailing prose or name lines after it). Mid-sentence uses of
     "thanks"/"regards" are left alone.
     """
     lines = body.split("\n")
@@ -66,7 +67,8 @@ def _strip_trailing_closing(body: str, candidate_name: str | None) -> str:
     if end < 0:
         return body
 
-    # Last 1–3 non-blank line indices, bottom-to-top.
+    # Last 1–3 non-blank line indices (order among them does not matter —
+    # the earliest physical index among phrase matches is selected below).
     window: list[int] = []
     j = end
     while j >= 0 and len(window) < 3:
@@ -74,39 +76,21 @@ def _strip_trailing_closing(body: str, candidate_name: str | None) -> str:
             window.append(j)
         j -= 1
 
-    strip: set[int] = set()
-    idx = 0
-    while idx < len(window):
-        line_i = window[idx]
-        line = lines[line_i]
-
-        # window[0] is always the body's last non-blank line (from `end`), so a
-        # trailing name-after-closing is always caught by the name-first branch
-        # below — a forward "after" lookahead here would only ever see blanks.
-        if _is_closing_line(line):
-            strip.add(line_i)
-            idx += 1
-            continue
-
-        if (
-            candidate_name is not None
-            and line.strip().lower() == candidate_name.strip().lower()
-            and idx + 1 < len(window)
-        ):
-            prev_i = window[idx + 1]
-            if _is_closing_line(lines[prev_i]) and line_i == prev_i + 1:
-                strip.add(line_i)
-                strip.add(prev_i)
-                idx += 2
-                continue
-
-        # First non-matching line from the bottom — stop.
-        break
-
-    if not strip:
+    # Earliest (smallest index) standalone closing phrase in the window.
+    phrase_matches = [i for i in window if _is_closing_line(lines[i])]
+    if phrase_matches:
+        anchor = min(phrase_matches)
+    elif (
+        candidate_name is not None
+        and lines[end].strip().lower() == candidate_name.strip().lower()
+    ):
+        # Bare name with no valediction word — treat the last non-blank as
+        # the anchor so the programmatic signature can replace it.
+        anchor = end
+    else:
         return body
 
-    new_lines = [ln for i, ln in enumerate(lines) if i not in strip]
+    new_lines = lines[:anchor]
     while new_lines and new_lines[-1].strip() == "":
         new_lines.pop()
     return "\n".join(new_lines)

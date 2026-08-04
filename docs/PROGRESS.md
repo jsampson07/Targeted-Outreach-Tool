@@ -1,6 +1,6 @@
 # Progress Snapshot
 
-*Overwritten each session, not appended to. Reflects verified state as of the session ending 2026-08-03 — deterministic strip of model-authored trailing email closings before programmatic signature append.*
+*Overwritten each session, not appended to. Reflects verified state as of the session ending 2026-08-04 — second dogfooding catch on model-authored closing strip; anchor-then-sweep replaces consecutive bottom-up walk.*
 
 ---
 
@@ -8,17 +8,13 @@
 
 ### Verified working (functionally exercised, not just present)
 
-- **Strip model-authored trailing closing (this session):**
-  - **Root cause (dogfooding):** Generation/refine prompts forbid sign-offs, but `claude-haiku-4-5` does not reliably obey that negative instruction. A model-written `"Best,"` stacked with the programmatic `"Best regards,\n{name}"` — a broken double closing in copy-paste output.
-  - **Fix:** `_strip_trailing_closing` in `generated_emails.py` runs after `evaluate_with_retry` returns and before the existing signature append. Judge still sees raw model output.
-  - **Detection (conservative):** last 1–3 non-blank lines only; exact standalone valediction match after trimming one trailing comma/period; optional following `candidate_name` line also stripped. Mid-sentence "thanks"/"regards" left alone.
-  - **Rejected alternative:** fourth eval hard gate — probabilistic retry via the same model; strip is a guarantee.
-  - **Cleanup:** removed unreachable forward-`after` lookahead from the closing-line branch (`window[0]` is always the last non-blank line, so closing+name is handled by the name-first branch). Full `test_generated_emails.py` re-run; no assertion changes.
-- **Resume projects + signature name (prior session):** `candidate_name` / `projects` on `ResumeExtraction`; matching treats projects as evidence; post-eval signature append; FRAME 4 surfaces name + projects.
-- **Third eval hard gate — no unprompted gap admission (prior session).**
-- **Live mock-mode discovery fixtures (prior session).**
-- **Frontend FRAME 1–6** — discovery → resume/JD extract → generate email, sessionStorage rehydration.
-- **`GET /generated-emails/{id}`**, **`GET /job-descriptions/{jd_id}`**, auth, Postgres, Alembic (9 tables), Hunter/Mock discovery, LLM extraction/matching/generation/eval.
+- **Anchor-then-sweep closing strip (this session — dogfood round 2):**
+  - **Root cause:** Round-1 consecutive bottom-up walk stopped at the first non-matching bottom line. Real body `"Thanks,\nLooking forward to hearing from you."` left both lines intact; programmatic `"Best regards,\n{name}"` stacked again. Same problem class as round 1, found via continued personal use — the "real outcome data" differentiator doing real work, not just a talking point.
+  - **Fix:** `_strip_trailing_closing` now finds the earliest `_is_closing_line` match in the last ≤3 non-blank window and sweeps from that anchor through end of body. Bare-`candidate_name` last line is a fallback anchor. `_is_closing_line` unchanged. Wiring (once, after `evaluate_with_retry`, before signature append) unchanged.
+  - **Rejected:** expanding the closing-phrase list to cover trailing prose — whack-a-mole (same reasoning as rejecting a fixed enum for `EvalGates.violation_detail`).
+- **Strip model-authored trailing closing (prior session — dogfood round 1):** deterministic strip before signature append; fourth eval gate rejected.
+- **Resume projects + signature name; third eval hard gate; live mock discovery fixtures.**
+- **Frontend FRAME 1–6**; **`GET /generated-emails/{id}`**, **`GET /job-descriptions/{jd_id}`**, auth, Postgres, Alembic (9 tables), Hunter/Mock discovery, LLM extraction/matching/generation/eval.
 
 ### Present, but not yet exercised by anything
 
@@ -45,14 +41,14 @@
 7. **`EvalGates.violation_detail`** + **`no_unprompted_gap_admission`** post-lock revisions; Out shapes strip `violation_detail`.
 8. **`generated_emails.py`** is the DB orchestrator; `email_generation.py` stays pure LLM. Always-insert-never-overwrite. `eval_score` = unweighted mean of five dimensions.
 9. **sessionStorage key `discoveryFlow`:** `{ company, discoveryResult, resume, jobDescription, generatedEmail }`.
-10. **`ResumeExtraction` revision:** `candidate_name` + `projects`/`ProjectEntry` with defaults for JSONB backward compat. Deterministic post-eval signature append; generation/refine prompts forbid model closings. `candidate_name` from resume text (not USERS profile) — see `OPEN_QUESTIONS.md`.
-11. **This session — model-closing strip:** `_strip_trailing_closing` between `evaluate_with_retry` and signature append. Not a schema change; fourth eval gate explicitly rejected (see `ARCHITECTURE.md` §3 / `OPEN_QUESTIONS.md`).
+10. **`ResumeExtraction` revision:** `candidate_name` + `projects`/`ProjectEntry` with defaults for JSONB backward compat. Deterministic post-eval signature append; generation/refine prompts forbid model closings.
+11. **Model-closing strip (rounds 1–2):** `_strip_trailing_closing` between `evaluate_with_retry` and signature append. Round 2 = anchor-then-sweep. Not a schema change; fourth eval gate and phrase-list expansion both explicitly rejected (see `ARCHITECTURE.md` §3 / `OPEN_QUESTIONS.md`).
 
 ---
 
 ## What's next
 
-1. **Manual dogfood** of generated emails after re-extract — confirm no double closings and project citation / signature name still look right.
+1. **Manual dogfood** of generated emails after this strip fix — confirm stacked closings / trailing-sentence-after-Thanks cases are gone.
 2. **Revisit `candidate_name` source** if mis-extraction shows up often (OPEN_QUESTIONS trigger).
 3. **Stretch — outcome logging / analytics**; deferred providers/auth hardening only if usage demands.
 
@@ -62,10 +58,8 @@
 
 **Backend** (`pytest tests/services/test_generated_emails.py -ra` from `backend/`):
 
-Re-run after dead-branch removal:
-
 ```
-=================== 6 failed, 18 passed, 1 warning in 4.89s ====================
+=================== 6 failed, 22 passed, 1 warning in 4.87s ====================
 ```
 
 Failed (pre-existing isolation leak — unchanged by this branch):
@@ -74,16 +68,16 @@ Failed (pre-existing isolation leak — unchanged by this branch):
 |---|---|---|
 | `test_generated_emails.py` | 6 error-path tests (`wrong_owner_*`, `missing_contact`, `*_missing_extracted_data`, `company_mismatch`) | `assert GeneratedEmail.count() == 0` sees leftover committed rows. `pytest.raises(...)` still passes. |
 
-All strip/signature assertions unchanged and still passing, including closing+name cases: `test_strip_trailing_closing_phrase_plus_candidate_name`, `test_signature_strips_model_closing_before_append`, `test_signature_appended_once_after_refine_pass`.
+All prior strip/signature assertions still passing, plus 4 new strip cases: `test_strip_trailing_closing_phrase_then_trailing_sentence`, `test_strip_trailing_closing_stacked_closings_plus_name`, `test_strip_trailing_closing_bare_candidate_name`, `test_strip_trailing_closing_anchor_not_bottom_most_sweeps_to_end`.
 
-**Frontend:** not exercised this session (backend-only strip fix).
+**Frontend:** not exercised this session (backend-only strip algorithm change).
 
 ---
 
 ## Doc notes from this session
 
-- **`ARCHITECTURE.md` §3:** added follow-up Decision (strip model-authored closing before signature append) — root cause, rejected fourth eval gate, pipeline position relative to `evaluate_with_retry`. Dead-branch cleanup: no edit — wording describes behavior ("a following `candidate_name` line, when present"), not the removed forward-lookahead mechanic.
-- **`OPEN_QUESTIONS.md`:** new Resolved entry for model-authored closing stacked with programmatic signature. Dead-branch cleanup: no edit — entry is implementation-detail-light.
-- **`PROGRESS.md`:** overwritten for this slice; amended for dead-branch removal + re-run results.
-- **`product_discovery_summary.md`:** not edited — implementation-level bug fix / internal cleanup, not an MVP-scope or roadmap change.
-- **`DATA_MODEL.md`:** not edited — no schema/column change.
+- **`ARCHITECTURE.md` §3:** Decision (strip model-authored closing…) updated to describe anchor-then-sweep; round-2 root cause and why phrase-list expansion was rejected (whack-a-mole / same as `violation_detail` enum rejection).
+- **`OPEN_QUESTIONS.md`:** existing Resolved entry amended with linked dogfooding round-2 finding — not a duplicate entry.
+- **`PROGRESS.md`:** overwritten for this slice.
+- **`product_discovery_summary.md`:** no change needed — implementation-level bug fix, not MVP-scope or roadmap.
+- **`DATA_MODEL.md`:** no change needed — no schema/column change.
