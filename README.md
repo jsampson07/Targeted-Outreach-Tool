@@ -1,4 +1,6 @@
-# Inroad <img src="frontend/src/assets/logo.svg" alt="Inroad" width="96" />
+# Inroad
+
+<img src="frontend/src/assets/logo.svg" alt="Inroad" width="96" />
 
 Targeted Outreach Platform
 
