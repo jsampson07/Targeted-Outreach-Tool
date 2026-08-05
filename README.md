@@ -1,6 +1,6 @@
 # Inroad
 
-![Inroad](frontend/src/assets/logo.svg)
+<img src="frontend/src/assets/logo.svg" alt="Inroad" width="96" />
 
 Targeted Outreach Platform
 
