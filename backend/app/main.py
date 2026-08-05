@@ -12,7 +12,14 @@ from app.routers import resume as resume_router
 
 settings = get_settings()
 
-app = FastAPI()
+app = FastAPI(
+    title="Inroad",
+    description=(
+        "Targeted Outreach Platform — discover a hiring contact for a company, "
+        "then draft a resume↔JD–grounded cold email with an automated quality "
+        "check. Copy-paste only; the app never sends mail."
+    ),
+)
 register_exception_handlers(app)
 app.add_middleware(
     CORSMiddleware,

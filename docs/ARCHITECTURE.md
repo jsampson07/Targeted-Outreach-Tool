@@ -353,3 +353,18 @@ class CompanySearchResponse(BaseModel):
 **Decision:** Persist `access_token` and `refresh_token` in `localStorage`.
 
 **Reasoning / tradeoff:** Matches the backend's current JSON-body refresh transport (no httpOnly cookie). Any XSS that can run script in the origin can read those tokens — that is the concrete risk this choice accepts. This does **not** reopen or flip the deferred cookie-transport decision; it is the client-side half of the same simplicity choice. See `OPEN_QUESTIONS.md` ("Refresh-token transport") for the revisit trigger, which is no longer purely theoretical now that localStorage is the live storage mechanism.
+
+### 8.5 Brand assets
+
+**Decision:** Product brand is **Inroad** (full first-contact form: "Inroad: Targeted Outreach Platform"). The logo mark source of truth is `frontend/src/assets/logo.svg` — a capital-"I" monogram on a rounded-square ("squircle") badge. The persistent logged-in header (`AppHeader` on `/`) shows the mark + "Inroad" wordmark with an always-visible "Targeted Outreach Platform" caption; login/signup use the full form as the page heading with the mark above it.
+
+**Color palette:** Taken from existing `frontend/src/index.css` tokens — badge fill `--accent` (`#1f6b5a`), letter fill `--bg` (`#f7f6f4`). No new brand palette was invented for the mark.
+
+**Favicon generation:** Raster PNGs are produced from the master SVG with **sharp** (libvips), chosen because the frontend is already a Node/Vite toolchain — no Python cairo stack required. Script: `frontend/scripts/generate-favicons.mjs`, run via `npm run generate-favicons`. `sharp` is a frontend `devDependency` only. Re-run after redesigning `logo.svg`; the PNG/SVG outputs under `frontend/public/` are committed static assets (not generated at app runtime).
+
+**Favicon file set** (linked from `frontend/index.html`, SVG first with PNG fallback):
+- `frontend/public/favicon.svg` (copy of the master mark)
+- `frontend/public/favicon-16x16.png`
+- `frontend/public/favicon-32x32.png`
+- `frontend/public/apple-touch-icon.png` (180×180)
+
