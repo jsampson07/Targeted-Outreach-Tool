@@ -1,4 +1,8 @@
-# Targeted Outreach Tool
+# Inroad
+
+![Inroad](frontend/src/assets/logo.svg)
+
+Targeted Outreach Platform
 
 Discover a plausible hiring contact for a company, then draft a resume↔JD–grounded cold email with an automated quality check — copy-paste only; the app never sends mail.
 
@@ -6,7 +10,7 @@ Discover a plausible hiring contact for a company, then draft a resume↔JD–gr
 
 New-grad job seekers trying to bypass the ATS via direct outreach hit three compounding frictions: they often don't know who to email, contact data from any single source is unreliable, and genuine personalization doesn't scale across many applications. The result is too few high-quality emails, or too many generic ones, with no reliable feedback loop.
 
-This tool takes a company and a role, discovers a contact with a transparent confidence signal, drafts outreach grounded in a structured resume↔JD comparison (not a generic prompt), and judges that draft against a rubric before the user ever sees it. Sending stays in the user's own mail client — a structural guarantee, not a policy promise.
+Inroad takes a company and a role, discovers a contact with a transparent confidence signal, drafts outreach grounded in a structured resume↔JD comparison (not a generic prompt), and judges that draft against a rubric before the user ever sees it. Sending stays in the user's own mail client — a structural guarantee, not a policy promise.
 
 ## Demo
 

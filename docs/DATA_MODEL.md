@@ -448,3 +448,9 @@ RESUMES + JOB_DESCRIPTIONS + CONTACTS ──> GENERATED_EMAILS
 ```
 
 Autogenerate performs this topological sort automatically via foreign keys; it isn't hand-ordered. Worth understanding independently so an incorrect autogenerate diff is recognizable rather than assumed correct.
+
+---
+
+## Brand / product naming (2026-08-05)
+
+**No change needed.** The Inroad rebrand is product naming and static brand assets only — no entity, column, enum, JSONB shape, or migration changes.

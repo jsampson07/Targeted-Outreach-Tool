@@ -4,6 +4,7 @@ import { useState, type FormEvent } from 'react'
 import { GeneratedEmailStep } from '../components/GeneratedEmailStep'
 import { JobDescriptionStep } from '../components/JobDescriptionStep'
 import { ResumeStep } from '../components/ResumeStep'
+import { AppHeader } from '../components/AppHeader'
 import { useAuth } from '../context/AuthContext'
 import { useResumeForGeneration } from '../hooks/useResumeForGeneration'
 import { ApiError } from '../lib/apiClient'
@@ -316,17 +317,18 @@ export function HomePage() {
 
   return (
     <main className="home-page discovery-page">
-      <header className="discovery-header">
-        <h1>Contact discovery</h1>
-        <div className="discovery-header-actions">
-          <button type="button" onClick={startNewSearch}>
-            Start new search
-          </button>
-          <button type="button" onClick={() => void logout()}>
-            Log out
-          </button>
-        </div>
-      </header>
+      <AppHeader
+        actions={
+          <>
+            <button type="button" onClick={startNewSearch}>
+              Start new search
+            </button>
+            <button type="button" onClick={() => void logout()}>
+              Log out
+            </button>
+          </>
+        }
+      />
 
       {frame === 1 ? (
         <section aria-label="Company search">

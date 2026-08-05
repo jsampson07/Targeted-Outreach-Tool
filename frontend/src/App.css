@@ -16,26 +16,77 @@
   font-size: 1.75rem;
 }
 
-.discovery-header {
+.auth-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.auth-brand-mark {
+  display: block;
+  width: 3rem;
+  height: 3rem;
+  flex-shrink: 0;
+}
+
+.auth-brand h1 {
+  margin: 0;
+  font-size: 1.35rem;
+  line-height: 1.3;
+}
+
+.app-header {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
   justify-content: space-between;
   gap: 0.75rem 1rem;
-  margin-bottom: 0.5rem;
+  margin-bottom: 1rem;
 }
 
-.discovery-header h1 {
-  margin: 0;
+.app-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
 }
 
-.discovery-header-actions {
+.app-brand-mark {
+  display: block;
+  width: 2.25rem;
+  height: 2.25rem;
+  flex-shrink: 0;
+}
+
+.app-brand-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.app-brand-wordmark {
+  color: var(--text-h);
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.app-brand-caption {
+  color: var(--text);
+  font-size: 0.75rem;
+  line-height: 1.3;
+}
+
+.app-header-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
 }
 
-.discovery-header-actions button {
+.app-header-actions button {
   margin-top: 0;
   padding: 0.45rem 0.75rem;
   border: 1px solid var(--border);

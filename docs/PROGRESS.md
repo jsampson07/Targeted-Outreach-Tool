@@ -2,7 +2,7 @@
 
 > For external readers: this is a living, session-overwritten implementation snapshot from active development — verified against the codebase each session, not a polished changelog or finished status report.
 
-*Overwritten each session, not appended to. Reflects verified state as of the session ending 2026-08-04 — public README + light external-reader header pass on engineering docs; no code or schema changes.*
+*Overwritten each session, not appended to. Reflects verified state as of the session ending 2026-08-05 — Inroad rebrand (naming + logo/favicon assets + persistent header lockup); no schema or behavioral pipeline changes.*
 
 ---
 
@@ -10,10 +10,9 @@
 
 ### Verified working (functionally exercised, not just present)
 
-- **Public root README (this session — docs only):** `/README.md` for recruiters/engineers; claims spot-checked against routers/services (auth, company search, contact discovery, resumes, JDs, generated emails) and frontend FRAME 1–6. Demo GIF is a placeholder (`docs/demo.gif` not yet added). No live deploy link — deferred on purpose.
-- **Anchor-then-sweep closing strip (prior — dogfood round 2):** `_strip_trailing_closing` finds earliest `_is_closing_line` in last ≤3 non-blank window and sweeps from that anchor; bare-`candidate_name` fallback. Wiring unchanged (after `evaluate_with_retry`, before signature append).
-- **Strip model-authored trailing closing (dogfood round 1);** resume projects + signature name; third eval hard gate; live mock discovery fixtures.
-- **Frontend FRAME 1–6**; **`GET /generated-emails/{id}`**, **`GET /job-descriptions/{jd_id}`**, auth, Postgres, Alembic (9 tables), Hunter/Mock discovery, LLM extraction/matching/generation/eval.
+- **Inroad rebrand (this session — branding / static assets / copy):** Product renamed from "Targeted Outreach Tool" to **Inroad** with naming pattern locked (bare "Inroad" for package/nav wordmark; full form "Inroad: Targeted Outreach Platform" at first-contact surfaces; persistent header lockup with caption). Logo mark is a capital-"I" monogram on a teal squircle (`frontend/src/assets/logo.svg`). Favicon set generated via `sharp` (`npm run generate-favicons`) into `frontend/public/`. Wired into `index.html`, `AppHeader`, login/signup, README, FastAPI `/docs` title, `product_discovery_summary.md` H1. **No schema, architecture behavior, or pipeline logic changes** beyond new static assets + `sharp` as a frontend `devDependency` for one-off regeneration.
+- **Anchor-then-sweep closing strip (prior):** `_strip_trailing_closing` between `evaluate_with_retry` and signature append.
+- **Frontend FRAME 1–6**; auth; Postgres; Alembic (9 tables); Hunter/Mock discovery; LLM extract/match/generate/eval.
 
 ### Present, but not yet exercised by anything
 
@@ -57,15 +56,15 @@
 
 ## Test results (this session — actual suite output)
 
-**No test suite run this session** — documentation-only changes (README + engineering-doc headers / deferral notes). Prior session strip-suite status unchanged: backend strip/signature tests passing with known pre-existing isolation leak on 6 error-path count assertions in `test_generated_emails.py`.
+**No full suite run this session** — branding/docs slice. Header extraction confirmed safe vs existing tests (no assertions on `discovery-header` / `"Contact discovery"` heading). Login/signup tests key off submit button labels, not the old page `<h1>` text.
 
 ---
 
 ## Doc notes from this session
 
-- **`README.md` (new):** Public-facing root README — pitch, problem, GIF placeholder, technical substance teaser, stack, Mermaid pipeline, local setup (mock-first discovery), honest status/roadmap, links to engineering docs. Claims verified against `app/routers/` + `app/services/` + frontend FRAME components; no invented metrics or live demo URL.
-- **`OPEN_QUESTIONS.md`:** external-reader header added; existing "Login rate-limiting / brute-force protection" entry amended (not duplicated) — public README added, live deploy deliberately deferred until this gap closes (trigger actively evaluated).
-- **`product_discovery_summary.md`:** external-reader header added; one new Deferred Features row — "Public / live deployment" (rate-limiting / LLM-cost exposure; points to `OPEN_QUESTIONS.md`).
-- **`PROGRESS.md`:** overwritten for this docs session.
-- **`ARCHITECTURE.md`:** external-reader header only — no content/decision changes (setup steps live in root README + `backend/.env.example`; nothing new to lock here).
-- **`DATA_MODEL.md`:** external-reader header only — no schema/decision changes.
+- **`PROGRESS.md`:** overwritten for this branding session.
+- **`ARCHITECTURE.md`:** new §8.5 Brand assets (logo source, sharp generate script, favicon set, token palette).
+- **`DATA_MODEL.md`:** explicit note — no schema change for the rebrand.
+- **`OPEN_QUESTIONS.md`:** favicon gap not re-flagged (resolved). Added a short caveat on SVG `<text>` rasterization / no `.ico` fallback.
+- **`product_discovery_summary.md`:** H1 renamed only.
+- **`README.md`:** Inroad title + subtitle + logo embed; purpose copy preserved with name reference update.

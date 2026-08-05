@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
 
+import logoUrl from '../assets/logo.svg'
 import { useAuth } from '../context/AuthContext'
 import { ApiError } from '../lib/apiClient'
 
@@ -36,7 +37,16 @@ export function SignupPage() {
 
   return (
     <main className="auth-page">
-      <h1>Sign up</h1>
+      <div className="auth-brand">
+        <img
+          className="auth-brand-mark"
+          src={logoUrl}
+          alt=""
+          width={48}
+          height={48}
+        />
+        <h1>Inroad: Targeted Outreach Platform</h1>
+      </div>
       <form className="auth-form" onSubmit={handleSubmit}>
         <label>
           Email

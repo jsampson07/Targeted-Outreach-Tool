@@ -1,4 +1,4 @@
-# Targeted Outreach Tool — Product Discovery Summary
+# Inroad: Targeted Outreach Platform — Product Discovery Summary
 
 > For external readers: this is the locked product-scope and rationale document from active development — MVP boundaries, deferred features, and roadmap — not a marketing brief or finished product spec.
 
