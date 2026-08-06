@@ -51,10 +51,16 @@ export type LockedCompany = {
 
 /**
  * Single sessionStorage payload for the home-page flow (discovery + documents
- * + generated email). Key: "discoveryFlow" — see discoverySession.ts.
+ * + generated email + local sent-outcome UX flag). Key: "discoveryFlow" —
+ * see discoverySession.ts.
  *
  * ``resume`` / ``jobDescription`` / ``generatedEmail`` hold paid-call Out
  * objects so a refresh rehydrates without re-spending LLM/provider credits.
+ *
+ * ``sentOutcomeLogged`` is a frontend-only UX guard: true after a successful
+ * POST /outcomes { event_type: "sent" } for the current generatedEmail, so a
+ * refresh shows the confirmed state instead of inviting a duplicate click.
+ * Not a backend constraint — the API still allows multiple SENT rows.
  */
 export type PersistedDiscoveryFlow = {
   company: LockedCompany | null
@@ -62,4 +68,5 @@ export type PersistedDiscoveryFlow = {
   resume: ResumeOut | null
   jobDescription: JobDescriptionOut | null
   generatedEmail: GeneratedEmailOut | null
+  sentOutcomeLogged: boolean
 }

@@ -70,6 +70,9 @@ v1 ships **single-shot only**: once `POST /generated-emails` succeeds (or a prio
 ### Frontend-side company/contact consistency filtering
 The backend now rejects generate-email requests when `contact.company_id != job_description.company_id` (`ValidationError` — see Resolved below). Once the Phase 3 frontend is built, the UI should also prevent inconsistent selections (e.g. only offer contacts for the company tied to the selected JD) so users never hit that 422 in the happy path. This is a forward note for frontend work, not a backend gap — the server check stays as the guarantee regardless.
 
+### Outcome logging Slice 2 — any event type against any past email
+Slice 1 (FRAME 6) only logs `event_type: "sent"` for the currently displayed generated email, with a frontend-only confirmed-state guard in `sessionStorage`. Slice 2 still needs a generic UI to log **any** `OutcomeEventType` (`sent` / `replied` / `no_response` / `interview`) against **any** past `GENERATED_EMAILS` row — including a second/late "sent" for an email that already has a SENT row, and including emails that are no longer on FRAME 6. Do not treat Slice 1's current-email-only Mark as Sent as the full outcome-logging surface; the append-only backend already supports this.
+
 ---
 
 ## Explored but never settled at all (pure brainstorming, no direction chosen)

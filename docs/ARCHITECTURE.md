@@ -265,27 +265,30 @@ class CompanySearchResponse(BaseModel):
 
 **Alternative considered:** Skip TanStack Query until the first feature screen needs caching. Rejected because the root provider is cheap and the duplicated-boilerplate cost shows up immediately across multiple API-calling screens.
 
-### 8.2.1 `useMutation` for company search, contact discovery, document extract, and email generation
+### 8.2.1 `useMutation` for company search, contact discovery, document extract, email generation, and Mark as Sent
 
-**Decision:** `POST /companies/search`, `POST /contacts/discover`, resume upload+extract, JD create+extract, and `POST /generated-emails` are wired with TanStack Query `useMutation`, **not** `useQuery`.
+**Decision:** `POST /companies/search`, `POST /contacts/discover`, resume upload+extract, JD create+extract, `POST /generated-emails`, and FRAME 6's `POST /outcomes` (Mark as Sent) are wired with TanStack Query `useMutation`, **not** `useQuery`.
 
-**Reasoning:** These are side-effecting, user-triggered actions (submit a search; spend discovery credits; spend LLM extract/generate credits), not cacheable/refetchable reads. `useQuery` would imply background refetch, stale-while-revalidate, and remount-triggered re-execution — wrong for a Clearbit lookup that should fire once per submit, and actively harmful for discovery/extract/generate, which spend real, rationed credits. Mutation semantics (explicit `mutate`, no automatic refetch) match the product contract.
+**Reasoning:** These are side-effecting, user-triggered actions (submit a search; spend discovery credits; spend LLM extract/generate credits; append an outcome event), not cacheable/refetchable reads. `useQuery` would imply background refetch, stale-while-revalidate, and remount-triggered re-execution — wrong for a Clearbit lookup that should fire once per submit, and actively harmful for discovery/extract/generate, which spend real, rationed credits. Mutation semantics (explicit `mutate`, no automatic refetch) match the product contract.
 
 ### 8.2.2 Discovery-flow sessionStorage persistence
 
-**Decision:** Persist home-page flow state in `sessionStorage` under a single namespaced key `discoveryFlow`, storing one JSON object `{ company, discoveryResult, resume, jobDescription, generatedEmail }`. Do **not** use `localStorage` for this payload. Do **not** persist the raw company-search candidate list. Document and email fields were added to this same key (not a sibling) so "Start new search" and rehydration stay one clear/one read — see §8.2.3–§8.2.4.
+**Decision:** Persist home-page flow state in `sessionStorage` under a single namespaced key `discoveryFlow`, storing one JSON object `{ company, discoveryResult, resume, jobDescription, generatedEmail, sentOutcomeLogged }`. Do **not** use `localStorage` for this payload. Do **not** persist the raw company-search candidate list. Document, email, and sent-outcome fields were added to this same key (not a sibling) so "Start new search" and rehydration stay one clear/one read — see §8.2.3–§8.2.4.
 
 **What is persisted:**
-- On successful company lock-in (candidate click or manual domain entry): `{ company: { name, domain }, discoveryResult: null, resume: null, jobDescription: null, generatedEmail: null }` — written immediately, before `role_title` is entered, so a refresh during the role-title frame rehydrates there rather than back to company search.
+- On successful company lock-in (candidate click or manual domain entry): `{ company: { name, domain }, discoveryResult: null, resume: null, jobDescription: null, generatedEmail: null, sentOutcomeLogged: false }` — written immediately, before `role_title` is entered, so a refresh during the role-title frame rehydrates there rather than back to company search.
 - On discovery mutation completion (contact found **or** `contact: null` — both are valid completed outcomes): the full `ContactDiscoveryResponse` is written under the same object; document/email fields are cleared (new discovery starts a new pipeline).
 - On successful resume/JD extract: the post-extract `ResumeOut` / `JobDescriptionOut` objects are written under `resume` / `jobDescription` (see §8.2.3).
-- On successful email generation: the full `GeneratedEmailOut` is written under `generatedEmail` (see §8.2.4).
+- On successful email generation: the full `GeneratedEmailOut` is written under `generatedEmail` (see §8.2.4); `sentOutcomeLogged` resets to `false`.
+- On successful Mark as Sent (`POST /outcomes` with `event_type: "sent"`): `sentOutcomeLogged` is set to `true` for the current `generatedEmail` (see §8.2.4). Cleared whenever `generatedEmail` is cleared or replaced.
 
 **What is not persisted:** The candidate list from `POST /companies/search`. That call is free (keyless Clearbit) and idempotent; re-running it after a refresh is fine and cheaper than storing ephemeral suggestion UI.
 
 **Why sessionStorage over localStorage:** A discovered contact's name/email is third-party PII, not just the user's own data. `sessionStorage` clears on tab close (bounded exposure); `localStorage` would leave it sitting indefinitely. This is a deliberate choice, not a default.
 
 **Why discovery persistence is a cost/correctness concern:** `POST /contacts/discover` spends real, rationed provider credits. If a refresh silently re-triggered discovery, credits would burn on an accidental reload. Rehydrating the result frame from storage (no re-fetch) prevents that. On mount, the home page reads `discoveryFlow` once via a lazy `useState` initializer and lands directly on the correct frame — no flash of the company-search frame. "Start new search" clears both component state and the `sessionStorage` key.
+
+**Why `sentOutcomeLogged` lives on the same object (not a sibling key):** Same one-clear/one-read reasoning as resume/JD/`generatedEmail` (§8.2.3–§8.2.4). The flag is meaningful only relative to the current `generatedEmail`; putting it on a separate key would invite drift on "Start new search" and on writers that clear/replace the email. It is a frontend UX guard against accidental duplicate Mark as Sent clicks after refresh — not a source of truth about server state (no `GET /outcomes` re-check).
 
 ### 8.2.3 Resume + JD upload/extract frames (FRAME 4–5)
 
@@ -334,7 +337,9 @@ class CompanySearchResponse(BaseModel):
 
 **Single-shot design:** Once a result exists (successful mutation **or** sessionStorage rehydration), FRAME 6 shows the result only — no Generate button again. A failed attempt (before any success) may show Retry. Regenerating after a successful result is out of scope for v1 — see `OPEN_QUESTIONS.md` Explicitly deferred.
 
-**sessionStorage extension:** Added `generatedEmail: GeneratedEmailOut | null` on the existing `discoveryFlow` key (not a sibling). Same paid-call rehydration reasoning as resume/JD (§8.2.2–§8.2.3): generation spends LLM credits (match + generate + eval, possibly silent internal retry); refresh must not re-call `POST /generated-emails`.
+**Mark as Sent (outcome logging, Slice 1):** Once a result exists (same condition as above — live mutation success **or** sessionStorage rehydration), FRAME 6 shows an explicit **Mark as Sent** button next to Copy. Wired with `useMutation` calling `POST /outcomes` with `{ generated_email_id: <current email id>, event_type: "sent" }` — explicit click, no auto-fire, surfaces `ApiError.user_message` on failure with Retry available (same §8.2.1 pattern as generate/extract/discover). On success the button becomes a disabled confirmed state ("✓ Marked as sent"). That confirmed state is a **frontend UX guard against accidental duplicate clicks**, not a backend constraint: the API intentionally allows multiple `SENT` rows per `generated_email_id` (append-only event log; see §9 and `OPEN_QUESTIONS.md` Always-insert-never-overwrite precedent). Confirmed state is persisted as `sentOutcomeLogged: true` on the existing `discoveryFlow` object so a refresh re-shows confirmed rather than inviting a real duplicate log; no `GET /outcomes` re-check — correctness lives in the backend, the frontend only avoids the accidental double-submit. Other event types (`replied` / `no_response` / `interview`) and logging against past emails are Slice 2 — see `OPEN_QUESTIONS.md` forward-note.
+
+**sessionStorage extension:** Added `generatedEmail: GeneratedEmailOut | null` and `sentOutcomeLogged: boolean` on the existing `discoveryFlow` key (not a sibling). Same paid-call rehydration reasoning as resume/JD (§8.2.2–§8.2.3): generation spends LLM credits (match + generate + eval, possibly silent internal retry); refresh must not re-call `POST /generated-emails`. `sentOutcomeLogged` is co-located so it clears/resets with the email it refers to (see §8.2.2).
 
 ### 8.3 API client and shared 401 handling
 

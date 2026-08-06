@@ -8,13 +8,18 @@ import type {
   GeneratedEmailOut,
   MatchData,
 } from '../lib/generatedEmailTypes'
+import { createOutcome } from '../lib/outcomeApi'
 
 type Props = {
   contactId: number
   resumeId: number
   jobDescriptionId: number
   initialGeneratedEmail: GeneratedEmailOut | null
+  /** Rehydrated frontend UX flag — true if "sent" was already logged this tab. */
+  initialSentOutcomeLogged: boolean
   onReady: (email: GeneratedEmailOut) => void
+  /** Persist sentOutcomeLogged on the discoveryFlow sessionStorage object. */
+  onSentLogged: () => void
 }
 
 const DIMENSION_LABELS: Record<keyof EvalDimensions, string> = {
@@ -99,10 +104,42 @@ function MatchDataDetails({ matchData }: { matchData: MatchData }) {
   )
 }
 
-function EmailResult({ email }: { email: GeneratedEmailOut }) {
+type EmailResultProps = {
+  email: GeneratedEmailOut
+  initialSentOutcomeLogged: boolean
+  onSentLogged: () => void
+}
+
+function EmailResult({
+  email,
+  initialSentOutcomeLogged,
+  onSentLogged,
+}: EmailResultProps) {
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>(
     'idle',
   )
+  const [sentLogged, setSentLogged] = useState(initialSentOutcomeLogged)
+  const [sentError, setSentError] = useState<string | null>(null)
+
+  const sentMutation = useMutation({
+    mutationFn: () =>
+      createOutcome({
+        generated_email_id: email.id,
+        event_type: 'sent',
+      }),
+    onSuccess: () => {
+      setSentError(null)
+      setSentLogged(true)
+      onSentLogged()
+    },
+    onError: (err) => {
+      if (err instanceof ApiError) {
+        setSentError(err.user_message)
+      } else {
+        setSentError('Something went wrong. Please try again.')
+      }
+    },
+  })
 
   async function handleCopy() {
     try {
@@ -143,9 +180,31 @@ function EmailResult({ email }: { email: GeneratedEmailOut }) {
         <pre className="email-body">{email.body}</pre>
       </div>
 
-      <button type="button" onClick={() => void handleCopy()}>
-        Copy subject and body
-      </button>
+      <div className="email-actions">
+        <button type="button" onClick={() => void handleCopy()}>
+          Copy subject and body
+        </button>
+        {sentLogged ? (
+          <button type="button" disabled aria-label="Marked as sent">
+            ✓ Marked as sent
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled={sentMutation.isPending}
+            onClick={() => {
+              setSentError(null)
+              sentMutation.mutate()
+            }}
+          >
+            {sentMutation.isPending
+              ? 'Marking as sent…'
+              : sentError
+                ? 'Retry'
+                : 'Mark as Sent'}
+          </button>
+        )}
+      </div>
       {copyStatus === 'copied' ? (
         <p className="discovery-muted" role="status">
           Copied to clipboard.
@@ -154,6 +213,11 @@ function EmailResult({ email }: { email: GeneratedEmailOut }) {
       {copyStatus === 'failed' ? (
         <p className="auth-error" role="alert">
           Could not copy to clipboard. Please copy manually.
+        </p>
+      ) : null}
+      {sentError ? (
+        <p className="auth-error" role="alert">
+          {sentError}
         </p>
       ) : null}
 
@@ -199,13 +263,17 @@ function EmailResult({ email }: { email: GeneratedEmailOut }) {
 /**
  * FRAME 6 UI: explicit Generate Email mutation → display GeneratedEmailOut.
  * Single-shot: once a result exists (live or rehydrated), no Generate button.
+ * Result view includes Mark as Sent (POST /outcomes) with a frontend-only
+ * duplicate-click guard persisted on discoveryFlow.sentOutcomeLogged.
  */
 export function GeneratedEmailStep({
   contactId,
   resumeId,
   jobDescriptionId,
   initialGeneratedEmail,
+  initialSentOutcomeLogged,
   onReady,
+  onSentLogged,
 }: Props) {
   const [generatedEmail, setGeneratedEmail] =
     useState<GeneratedEmailOut | null>(initialGeneratedEmail)
@@ -233,7 +301,19 @@ export function GeneratedEmailStep({
   })
 
   if (generatedEmail) {
-    return <EmailResult email={generatedEmail} />
+    // Only honor the rehydrated flag when showing the same email that was
+    // persisted — a live generate (or a new id) always starts clickable.
+    const rehydratedSent =
+      initialGeneratedEmail?.id === generatedEmail.id &&
+      initialSentOutcomeLogged
+
+    return (
+      <EmailResult
+        email={generatedEmail}
+        initialSentOutcomeLogged={rehydratedSent}
+        onSentLogged={onSentLogged}
+      />
+    )
   }
 
   return (
