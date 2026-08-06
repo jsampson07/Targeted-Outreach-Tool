@@ -11,6 +11,9 @@ class Outcome(Base):
     __tablename__ = "outcomes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id"), index=True, nullable=False
+    )
     generated_email_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("generated_emails.id"), index=True, nullable=False
     )

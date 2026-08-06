@@ -336,6 +336,10 @@ class OutcomeOut(BaseModel):
 
 **Decision:** No `OutcomeUpdate` schema. `OUTCOMES` is an append-only event log per the product doc — the only valid operations are "log a new event" and "read history." A need to edit or delete a row would indicate the model is being used incorrectly (a correction should be a new appended event, not a mutation).
 
+**Decision (`occurred_at` semantics):** Server-stamped only (`server_default=func.now()`); no client-supplied override on `OutcomeCreate`. Means when the event was logged, not necessarily when it happened in the real world. Deliberate v1 choice favoring log-order over precise elapsed-time — see `OPEN_QUESTIONS.md` Resolved "OUTCOMES.occurred_at: server-stamped vs. client-supplied backdating" for the one-way-door caveat and revisit trigger.
+
+**Decision (revision):** The ORM model gained a denormalized `user_id` column (`FK → users.id`, `NOT NULL`, `index=True`) after the initial 9-table migration already created `OUTCOMES` without it. Reasoning: the analytics view (MVP feature #7 — per-user reply rate by confidence tier / eval score) is a **locked** primary read pattern, not a hypothetical future cost. Filtering `OUTCOMES` by `user_id` directly avoids a 3-table join (`Outcome → GeneratedEmail → Resume → User`) on every analytics query. This deliberately diverges from the `GENERATED_EMAILS.user_id` deferral — that table already shipped without denormalization and its join cost was unmeasured; `OUTCOMES` is new-to-API and the read pattern was known before the column was added. `user_id` is set server-side only (`current_user.id` after `get_generated_email_by_id` verifies ownership) — never taken from client input. `OutcomeOut` deliberately excludes `user_id` (implicit via auth scope), same allowlist principle as `RefreshTokenOut` excluding `token_hash`. `OutcomeEventType` lives in `app/core/enums.py` (shared with the ORM column), not redefined in the schema file — same pattern as `VerificationTier`. See `OPEN_QUESTIONS.md` "GENERATED_EMAILS.user_id denormalization" for the cross-reference that documents why the two tables made opposite calls.
+
 ### 2.9 REFRESH_TOKENS
 
 ```python
@@ -365,6 +369,10 @@ class RefreshTokenOut(BaseModel):
 `REFRESH_TOKENS` (added during Phase 1 planning, after the original seven entities were locked) is still included in this same initial migration rather than treated as a later addition. The distinction that matters isn't *when* a table was decided, it's whether it was fully decided before the migration file gets written — `REFRESH_TOKENS`' schema was locked before any migration exists, exactly like the original seven; it just wasn't locked at the same moment they were.
 
 **Where multiple migrations remain correct:** Genuinely later, uninformed-at-this-point additions — e.g. the deferred `SEARCHES` table from the product doc's deferred-features list — since that decision, by design, comes only after real usage informs whether it's needed.
+
+**Additive migrations after the initial 9-table schema (recorded):**
+- `97807b9a3c89` — add `user_id` to `job_descriptions` (ownership scoping identified after the initial migration existed).
+- `75ea1b948b2a` — add `user_id` to `outcomes` (denormalization for the locked analytics read pattern; table already existed from the initial migration without this column). Same distinction as future entities like `SEARCHES`: the table was created before this need was identified, so the change is a second, additive migration against an already-existing table — **not** rewritten into the original initial migration.
 
 ### 3.2 Naming convention
 
@@ -420,7 +428,7 @@ def downgrade():
 
 ### 3.6 Foreign keys require explicit indexing
 
-**Decision:** Every foreign key column is declared with `index=True` at the model level: `resumes.user_id`, `refresh_tokens.user_id`, `job_descriptions.company_id`, `raw_provider_results.company_id`, `contacts.company_id`, `generated_emails.contact_id/resume_id/job_description_id`, `outcomes.generated_email_id`.
+**Decision:** Every foreign key column is declared with `index=True` at the model level: `resumes.user_id`, `refresh_tokens.user_id`, `job_descriptions.user_id/company_id`, `raw_provider_results.company_id`, `contacts.company_id`, `generated_emails.contact_id/resume_id/job_description_id`, `outcomes.user_id/generated_email_id`.
 
 **Reasoning:** Postgres automatically indexes primary keys and `unique=True` columns, but **not** foreign key columns. Columns like `generated_emails.contact_id` will be queried constantly (fetching a contact's emails, analytics joins) — without an explicit index, that's a sequential scan as tables grow. Autogenerate mirrors exactly what the SQLAlchemy models specify, so this must be decided at the model layer, not patched into the migration afterward.
 
@@ -438,6 +446,8 @@ def downgrade():
 USERS ─────────────┐
                     ├──> RESUMES
                     ├──> REFRESH_TOKENS
+                    ├──> JOB_DESCRIPTIONS.user_id
+                    └──> OUTCOMES.user_id
 COMPANIES ──────────┼──> JOB_DESCRIPTIONS
                     ├──> RAW_PROVIDER_RESULTS
                     └──> CONTACTS
@@ -453,4 +463,4 @@ Autogenerate performs this topological sort automatically via foreign keys; it i
 
 ## Brand / product naming (2026-08-05)
 
-**No change needed.** The Inroad rebrand is product naming and static brand assets only — no entity, column, enum, JSONB shape, or migration changes.
+**No change needed.** The Inroad rebrand is product naming and static brand assets only — no entity, column, enum, JSONB shape, or migration changes. (The `outcomes.user_id` additive migration is a separate, later decision — see §2.8 / §3.1.)
