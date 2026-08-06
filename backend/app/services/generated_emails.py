@@ -16,6 +16,7 @@ from app.models.contact import Contact
 from app.models.generated_email import GeneratedEmail
 from app.models.resume import Resume
 from app.models.user import User
+from app.schemas.generated_email import GeneratedEmailListOut
 from app.schemas.job_description import JDExtraction
 from app.schemas.resume import ResumeExtraction
 from app.services import job_description as job_description_service
@@ -123,6 +124,50 @@ def get_generated_email_by_id(
             )
         )
     return row
+
+
+def list_generated_emails(
+    db: Session, user: User
+) -> list[GeneratedEmailListOut]:
+    """List the caller's generated emails for a past-email picker UI.
+
+    Ownership uses the same Resume-join as ``get_generated_email_by_id`` —
+    no denormalized ``user_id`` on ``GENERATED_EMAILS``. Joins Contact and
+    Company for display fields only. Does **not** join outcome status
+    (deliberate single-purpose scoping; a future frontend can cross-reference
+    ``GET /outcomes`` client-side). No pagination in v1.
+    """
+    rows = (
+        db.query(
+            GeneratedEmail.id,
+            GeneratedEmail.subject,
+            Contact.name.label("contact_name"),
+            Contact.title.label("contact_title"),
+            Company.name.label("company_name"),
+            GeneratedEmail.eval_score,
+            GeneratedEmail.gate_passed,
+            GeneratedEmail.created_at,
+        )
+        .join(Resume, GeneratedEmail.resume_id == Resume.id)
+        .join(Contact, GeneratedEmail.contact_id == Contact.id)
+        .join(Company, Contact.company_id == Company.id)
+        .filter(Resume.user_id == user.id)
+        .order_by(GeneratedEmail.created_at.desc(), GeneratedEmail.id.desc())
+        .all()
+    )
+    return [
+        GeneratedEmailListOut(
+            id=row.id,
+            subject=row.subject,
+            contact_name=row.contact_name,
+            contact_title=row.contact_title,
+            company_name=row.company_name,
+            eval_score=row.eval_score,
+            gate_passed=row.gate_passed,
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
 
 
 async def generate_and_persist_email(
