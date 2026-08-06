@@ -63,3 +63,18 @@ export type GeneratedEmailOut = {
   gate_passed: boolean
   created_at: string
 }
+
+/**
+ * Display-focused list shape for GET /generated-emails (DATA_MODEL.md §2.7).
+ * Omits body / eval_breakdown / match_data — fetch those via get-by-id on expand.
+ */
+export type GeneratedEmailListOut = {
+  id: number
+  subject: string
+  contact_name: string | null
+  contact_title: string | null
+  company_name: string
+  eval_score: number
+  gate_passed: boolean
+  created_at: string
+}

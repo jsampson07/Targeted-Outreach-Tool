@@ -70,11 +70,6 @@ v1 ships **single-shot only**: once `POST /generated-emails` succeeds (or a prio
 ### Frontend-side company/contact consistency filtering
 The backend now rejects generate-email requests when `contact.company_id != job_description.company_id` (`ValidationError` — see Resolved below). Once the Phase 3 frontend is built, the UI should also prevent inconsistent selections (e.g. only offer contacts for the company tied to the selected JD) so users never hit that 422 in the happy path. This is a forward note for frontend work, not a backend gap — the server check stays as the guarantee regardless.
 
-### Outcome logging Slice 2 — any event type against any past email
-**Partial (Slice 2a backend, 2026-08-06):** Backend now supports the picker + retract surface: `GET /generated-emails` → `list[GeneratedEmailListOut]` (ownership via Resume join; display fields only; no outcome-status join), and `POST /outcomes/{id}/retract` (one-way `voided=true`; `list_outcomes` excludes voided). See `ARCHITECTURE.md` §9 / `DATA_MODEL.md` §2.7–2.8.
-
-**Still open — Slice 2b (frontend):** A generic UI to log **any** `OutcomeEventType` (`sent` / `replied` / `no_response` / `interview`) against **any** past `GENERATED_EMAILS` row (picker view + log-any-event UI), plus a retract action in the UI for mistaken logs. Slice 1's current-email-only Mark as Sent remains the only frontend outcome surface until 2b. Do not treat Slice 1 as the full outcome-logging product surface.
-
 ---
 
 ## Explored but never settled at all (pure brainstorming, no direction chosen)
@@ -173,6 +168,14 @@ proves too noisy in real use.
 
 ### OUTCOMES soft-delete vs. hard-delete for mistaken logs
 **Resolved (Outcome logging Slice 2a, 2026-08-06):** Soft delete via a one-way `voided` boolean (`NOT NULL`, default `false`; migration `c4f8e2a91b07`), flipped only by `POST /outcomes/{id}/retract`. Hard delete was rejected because it would erase the audit trail for a correction — contradicting the append-only guarantee that even mistaken logs leave a recoverable record in Postgres. Soft delete preserves that audit guarantee while excluding voided rows from `list_outcomes` (and any future analytics that must go through `app/services/outcomes.py`). No un-retract; no general row editing. **Future interaction — uniqueness on SENT:** if a uniqueness constraint on `SENT` per `generated_email_id` is ever added later, it **MUST** account for voided (e.g. a partial unique index needs `AND voided = false` in its `WHERE` clause). A constraint that ignores `voided` would incorrectly block re-logging after a legitimate retraction.
+
+### Outcome logging Slice 2 — any event type against any past email
+**Resolved (Slice 2a backend 2026-08-06; Slice 2b frontend 2026-08-06):** Full surface shipped.
+
+- **2a (backend):** `GET /generated-emails` → `list[GeneratedEmailListOut]` (ownership via Resume join; display fields only; no outcome-status join); `POST /outcomes/{id}/retract` (one-way `voided=true`; `list_outcomes` excludes voided). See `ARCHITECTURE.md` §9 / `DATA_MODEL.md` §2.7–2.8.
+- **2b (frontend):** Protected `/history` route — list past emails, client-side All/Logged/Not-yet-logged filter (default Logged), expand for full body + outcome timeline, log any `OutcomeEventType`, retract with inline confirm. Uses `useQuery` for free list reads; no `sessionStorage` (contrast with `/` discovery flow). See `ARCHITECTURE.md` §8.6.
+
+Slice 1's FRAME 6 Mark as Sent remains as a separate current-email-only convenience surface; it is not the full outcome-logging product surface. Analytics aggregation is still a future slice.
 
 ### OUTCOMES row-growth / retention
 **Resolved (Outcome logging Slice 2a, 2026-08-06 — deliberately not designed for):** Voided rows accumulate; so do legitimate event rows. Row growth on `OUTCOMES` was considered and deliberately not designed for — same reasoning/precedent as resume-table row growth in `product_discovery_summary.md` ("not a real concern at this project's realistic scale"). No TTL, archival, or hard-purge path in v1. If it ever becomes a UI clutter problem, solve with normal product patterns (search/sort/pagination), not a schema change.

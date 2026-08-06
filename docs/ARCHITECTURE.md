@@ -253,9 +253,9 @@ class CompanySearchResponse(BaseModel):
 
 ### 8.1 Routing
 
-**Decision:** `react-router-dom` (`BrowserRouter`) with public `/login` `/signup` routes and a `ProtectedRoute` wrapper that redirects to `/login` when `!isAuthenticated`. A single persistent home route (`/`) hosts the product flow — company resolution, contact discovery, resume/JD upload+extract, and generated email — as accumulating frames/sections on that one page, **not** as one route per feature.
+**Decision:** `react-router-dom` (`BrowserRouter`) with public `/login` `/signup` routes and a `ProtectedRoute` wrapper that redirects to `/login` when `!isAuthenticated`. Protected product routes: `/` (discovery/generate flow as accumulating frames on one page) and `/history` (past emails + outcomes — see §8.6). Flow steps on `/` remain component state, **not** one route per frame.
 
-**Reasoning:** At this scale there is no serious alternative worth debating — React Router is the default for React SPAs, and the protected-route pattern matches the JWT-gated backend without inventing a custom gate. Flow steps (search → role title → discovery → resume → JD → generate email) are component state on `/`, not URL segments: deep-linking mid-flow is not a v1 need, and keeping one route avoids inventing a multi-step URL scheme for a linear demo flow.
+**Reasoning:** At this scale there is no serious alternative worth debating — React Router is the default for React SPAs, and the protected-route pattern matches the JWT-gated backend without inventing a custom gate. Flow steps (search → role title → discovery → resume → JD → generate email) are component state on `/`, not URL segments: deep-linking mid-flow is not a v1 need, and keeping one route for that linear demo flow avoids inventing a multi-step URL scheme. `/history` is a separate route because it is a distinct browse/log surface, not a step in that linear flow.
 
 ### 8.2 Server state: TanStack Query
 
@@ -337,7 +337,7 @@ class CompanySearchResponse(BaseModel):
 
 **Single-shot design:** Once a result exists (successful mutation **or** sessionStorage rehydration), FRAME 6 shows the result only — no Generate button again. A failed attempt (before any success) may show Retry. Regenerating after a successful result is out of scope for v1 — see `OPEN_QUESTIONS.md` Explicitly deferred.
 
-**Mark as Sent (outcome logging, Slice 1):** Once a result exists (same condition as above — live mutation success **or** sessionStorage rehydration), FRAME 6 shows an explicit **Mark as Sent** button next to Copy. Wired with `useMutation` calling `POST /outcomes` with `{ generated_email_id: <current email id>, event_type: "sent" }` — explicit click, no auto-fire, surfaces `ApiError.user_message` on failure with Retry available (same §8.2.1 pattern as generate/extract/discover). On success the button becomes a disabled confirmed state ("✓ Marked as sent"). That confirmed state is a **frontend UX guard against accidental duplicate clicks**, not a backend constraint: the API intentionally allows multiple `SENT` rows per `generated_email_id` (append-only event log; see §9 and `OPEN_QUESTIONS.md` Always-insert-never-overwrite precedent). Confirmed state is persisted as `sentOutcomeLogged: true` on the existing `discoveryFlow` object so a refresh re-shows confirmed rather than inviting a real duplicate log; no `GET /outcomes` re-check — correctness lives in the backend, the frontend only avoids the accidental double-submit. Other event types (`replied` / `no_response` / `interview`) and logging against past emails are Slice 2 — see `OPEN_QUESTIONS.md` forward-note.
+**Mark as Sent (outcome logging, Slice 1):** Once a result exists (same condition as above — live mutation success **or** sessionStorage rehydration), FRAME 6 shows an explicit **Mark as Sent** button next to Copy. Wired with `useMutation` calling `POST /outcomes` with `{ generated_email_id: <current email id>, event_type: "sent" }` — explicit click, no auto-fire, surfaces `ApiError.user_message` on failure with Retry available (same §8.2.1 pattern as generate/extract/discover). On success the button becomes a disabled confirmed state ("✓ Marked as sent"). That confirmed state is a **frontend UX guard against accidental duplicate clicks**, not a backend constraint: the API intentionally allows multiple `SENT` rows per `generated_email_id` (append-only event log; see §9 and `OPEN_QUESTIONS.md` Always-insert-never-overwrite precedent). Confirmed state is persisted as `sentOutcomeLogged: true` on the existing `discoveryFlow` object so a refresh re-shows confirmed rather than inviting a real duplicate log; no `GET /outcomes` re-check — correctness lives in the backend, the frontend only avoids the accidental double-submit. Other event types and logging against past emails live on `/history` (Slice 2b — see §8.6); FRAME 6 stays current-email `sent` only.
 
 **sessionStorage extension:** Added `generatedEmail: GeneratedEmailOut | null` and `sentOutcomeLogged: boolean` on the existing `discoveryFlow` key (not a sibling). Same paid-call rehydration reasoning as resume/JD (§8.2.2–§8.2.3): generation spends LLM credits (match + generate + eval, possibly silent internal retry); refresh must not re-call `POST /generated-emails`. `sentOutcomeLogged` is co-located so it clears/resets with the email it refers to (see §8.2.2).
 
@@ -361,7 +361,7 @@ class CompanySearchResponse(BaseModel):
 
 ### 8.5 Brand assets
 
-**Decision:** Product brand is **Inroad** (full first-contact form: "Inroad: Targeted Outreach Platform"). The logo mark source of truth is `frontend/src/assets/logo.svg` — a capital-"I" monogram on a rounded-square ("squircle") badge. The persistent logged-in header (`AppHeader` on `/`) shows the mark + "Inroad" wordmark with an always-visible "Targeted Outreach Platform" caption; login/signup use the full form as the page heading with the mark above it.
+**Decision:** Product brand is **Inroad** (full first-contact form: "Inroad: Targeted Outreach Platform"). The logo mark source of truth is `frontend/src/assets/logo.svg` — a capital-"I" monogram on a rounded-square ("squircle") badge. The persistent logged-in header (`AppHeader` on `/` and `/history`) shows the mark + "Inroad" wordmark with an always-visible "Targeted Outreach Platform" caption, plus main nav links (Search → `/`, History → `/history`); login/signup use the full form as the page heading with the mark above it.
 
 **Color palette:** Taken from existing `frontend/src/index.css` tokens — badge fill `--accent` (`#1f6b5a`), letter fill `--bg` (`#f7f6f4`). No new brand palette was invented for the mark.
 
@@ -372,6 +372,24 @@ class CompanySearchResponse(BaseModel):
 - `frontend/public/favicon-16x16.png`
 - `frontend/public/favicon-32x32.png`
 - `frontend/public/apple-touch-icon.png` (180×180)
+
+### 8.6 Outcome history view (`/history`)
+
+**Decision:** A dedicated protected route `/history` (`HistoryPage`) lists past `GENERATED_EMAILS` rows, shows which have logged outcomes, lets the user log **any** `OutcomeEventType` against any row, and retract mistaken logs. This is the Slice 2b frontend consumer of Slice 2a's `GET /generated-emails` + `POST /outcomes/{id}/retract`, plus the existing `GET /outcomes` / `POST /outcomes`. FRAME 6's Mark as Sent remains a separate surface (current-email-only `sent`) and is unchanged.
+
+**Routing / nav:** Wrapped in the same `ProtectedRoute` as `/`. `AppHeader` gained Search / History `NavLink`s (previously brand + page-local actions only — no shared layout wrapper; each page still mounts `AppHeader` itself).
+
+**No sessionStorage (deliberate contrast with §8.2.2):** `/history` does **not** persist list or detail state in `sessionStorage`. On `/`, `discoveryFlow` exists specifically to avoid re-spending LLM/provider credits on refresh. `GET /generated-emails` and `GET /outcomes` are free, idempotent reads — refetching on mount/refresh is simpler and correct. Leaving that contrast undocumented would look like a forgotten feature; it is intentional.
+
+**`useQuery` (first genuine read-only case — contrast with §8.2.1):** List fetches use TanStack Query `useQuery` (`listGeneratedEmails`, `listOutcomes`), not `useMutation`. §8.2.1's all-`useMutation` pattern covers side-effecting, credit-spending, user-triggered actions where automatic refetch would be harmful. Here the data is cacheable/refetchable server state with no credit cost, so `useQuery` (mount fetch, invalidate-on-mutation) is the right tool. Detail expand uses `useQuery` with `enabled: open` for `getGeneratedEmailById`. Log / retract remain `useMutation` and invalidate the outcomes query key on success.
+
+**Client-side outcome grouping (O(1) network, not O(n)):** On mount, fetch the full email list and the full (unfiltered) outcomes list once. Group outcomes by `generated_email_id` in memory — that map drives both the per-row "logged?" badge and the expanded-row timeline. Do **not** re-fetch outcomes per row; do **not** ask the backend to join outcome status onto `GET /generated-emails` (Slice 2a deliberately scoped that endpoint as single-purpose). Expand fetches full `GeneratedEmailOut` only when a row opens (list shape omits body / eval_breakdown / match_data).
+
+**Filter:** Client-side only over already-fetched data — All / Logged / Not yet logged. **Default on page load: Logged** (hides emails with zero non-voided outcomes). No pagination (same scale reasoning as elsewhere).
+
+**Row expansion:** Inline `<details>` accordion (same disclosure pattern as `match_data` / `confidence_breakdown`), not a modal or separate route. Expanded content: subject/body + outcome timeline + log-any-event form + per-entry retract (inline two-click Confirm/Cancel, not `window.confirm()`).
+
+**Expected filter interaction after retract:** If retracting the last non-voided outcome for an email while the filter is Logged (the default), that email disappears from the visible list on refetch. Correct behavior — not a bug; no special-casing to keep it visible.
 
 ---
 
