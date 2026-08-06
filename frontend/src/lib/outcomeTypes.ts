@@ -16,4 +16,6 @@ export type OutcomeOut = {
   generated_email_id: number
   event_type: OutcomeEventType
   occurred_at: string
+  /** Soft-delete flag; list responses always false (voided rows excluded). */
+  voided: boolean
 }
