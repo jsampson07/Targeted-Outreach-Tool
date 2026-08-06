@@ -107,3 +107,21 @@ class GeneratedEmailOut(BaseModel):
     gate_passed: bool
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
+
+class GeneratedEmailListOut(BaseModel):
+    """Display-focused list shape for a past-email picker — not a full row.
+
+    Omits body, eval_breakdown, and match_data (not needed to identify which
+    email to act on). Contact/company fields are joined at read time; this
+    endpoint deliberately does not include outcome status.
+    """
+
+    id: int
+    subject: str
+    contact_name: str | None
+    contact_title: str | None
+    company_name: str
+    eval_score: float
+    gate_passed: bool
+    created_at: datetime

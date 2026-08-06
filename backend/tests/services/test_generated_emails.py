@@ -637,3 +637,86 @@ def test_signature_appended_once_after_refine_pass(
     assert row.body.count("Best regards,") == 1
     assert row.body.count("Alex Rivera") == 1
     assert row.body.count("Best,") == 0
+
+
+def _seed_list_email(
+    db: Session, user: User, *, domain: str, subject: str
+) -> GeneratedEmail:
+    """Insert a GENERATED_EMAILS row owned via resume — same pattern as outcomes tests."""
+    company = _company(db, domain=domain)
+    contact = _contact(db, company)
+    resume = _resume(db, user, extracted=False)
+    jd = _jd(db, user, company, extracted=False)
+    row = GeneratedEmail(
+        contact_id=contact.id,
+        resume_id=resume.id,
+        job_description_id=jd.id,
+        subject=subject,
+        body="Hi Jordan,\n\nBody.\n\nBest regards,",
+        eval_score=3.0,
+        eval_breakdown={
+            "gates": {
+                "no_unsupported_claims": True,
+                "correct_contact_name_used": True,
+                "no_unprompted_gap_admission": True,
+            },
+            "dimensions": {
+                "role_company_specificity": 3,
+                "relevance_alignment": 3,
+                "tone_professionalism": 3,
+                "conciseness": 3,
+                "clear_cta": 3,
+            },
+        },
+        match_data={
+            "skill_matches": [],
+            "experience_alignment": [],
+            "unmatched_jd_requirements": [],
+            "notable_resume_strengths": [],
+            "overall_match_summary": "ok",
+        },
+        gate_passed=True,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def test_list_generated_emails_ownership_scoped(db_session: Session):
+    """Ownership matches GET-by-id: Resume join; other user's rows never appear."""
+    alice = _user(db_session, "list-gen-alice@example.com")
+    bob = _user(db_session, "list-gen-bob@example.com")
+
+    alice_email = _seed_list_email(
+        db_session,
+        alice,
+        domain="list-gen-alice.test",
+        subject="Alice outreach",
+    )
+    bob_email = _seed_list_email(
+        db_session,
+        bob,
+        domain="list-gen-bob.test",
+        subject="Bob outreach",
+    )
+
+    alice_list = generated_emails_service.list_generated_emails(
+        db_session, alice
+    )
+    bob_list = generated_emails_service.list_generated_emails(db_session, bob)
+
+    assert len(alice_list) == 1
+    assert alice_list[0].id == alice_email.id
+    assert alice_list[0].subject == "Alice outreach"
+    assert alice_list[0].contact_name == "Jordan Lee"
+    assert alice_list[0].contact_title == "Engineering Manager"
+    assert alice_list[0].company_name == "Acme Corp"
+    assert alice_list[0].eval_score == pytest.approx(3.0)
+    assert alice_list[0].gate_passed is True
+    assert {row.id for row in alice_list} == {alice_email.id}
+
+    assert len(bob_list) == 1
+    assert bob_list[0].id == bob_email.id
+    assert {row.id for row in bob_list} == {bob_email.id}
+    assert alice_email.id not in {row.id for row in bob_list}
+    assert bob_email.id not in {row.id for row in alice_list}

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, false, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.enums import OutcomeEventType, outcome_event_type_enum
@@ -22,4 +22,10 @@ class Outcome(Base):
     )
     occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    # Soft-delete flag for mistaken logs. One-way (false→true only). No
+    # standalone index: list/analytics filter via already-indexed user_id,
+    # and a boolean alone is too low-selectivity to earn its own index.
+    voided: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
     )

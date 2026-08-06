@@ -375,19 +375,26 @@ class CompanySearchResponse(BaseModel):
 
 ---
 
-## 9. Outcomes: Append-Only Event Log
+## 9. Outcomes: Append-Only Event Log (+ Narrow Retract)
 
-**Decision:** `OUTCOMES` is exposed via a thin router (`app/routers/outcomes.py`) and a thick service (`app/services/outcomes.py`) — create + list only; no update/delete. Multiple rows for the same `generated_email_id` are expected (e.g. sent → replied → interview over time).
+**Decision:** `OUTCOMES` is exposed via a thin router (`app/routers/outcomes.py`) and a thick service (`app/services/outcomes.py`) — create, list, and a one-way retract action. Multiple rows for the same `generated_email_id` are expected (e.g. sent → replied → interview over time). There is no general update/delete or un-retract path.
 
 **Endpoints:**
 - `POST /outcomes` — body `OutcomeCreate` `{ generated_email_id, event_type }` → `OutcomeOut` (201)
-- `GET /outcomes` — optional `generated_email_id` query param → `list[OutcomeOut]`
+- `GET /outcomes` — optional `generated_email_id` query param → `list[OutcomeOut]` (non-voided only)
+- `POST /outcomes/{outcome_id}/retract` — action-style state transition (same convention as `POST /resumes/{id}/extract`), sets `voided=true` → `OutcomeOut`. Idempotent if already voided.
 
-Both require `get_current_user`. No pagination in v1 (same scale reasoning as resume row growth in `product_discovery_summary.md`).
+Both create/list and retract require `get_current_user`. No pagination in v1 (same scale reasoning as resume row growth in `product_discovery_summary.md`).
 
-**Ownership-verification pattern (reused, not reimplemented):** `create_outcome` calls `get_generated_email_by_id(db, current_user, generated_email_id)` — the same Resume-join helper used by `GET /generated-emails/{id}` — before insert. Missing and wrong-owner emails both raise `NotFoundError` (non-distinguishing 404). After that check passes, `outcome.user_id = current_user.id` is set directly from the already-verified caller; it is never derived from client input and never inferred by re-walking the GeneratedEmail → Resume join.
+**Ownership-verification patterns:**
+- **Create:** `create_outcome` calls `get_generated_email_by_id(db, current_user, generated_email_id)` — the same Resume-join helper used by `GET /generated-emails/{id}` — before insert. Missing and wrong-owner emails both raise `NotFoundError` (non-distinguishing 404). After that check passes, `outcome.user_id = current_user.id` is set directly from the already-verified caller; it is never derived from client input and never inferred by re-walking the GeneratedEmail → Resume join.
+- **Retract:** simpler — verifies `outcome.user_id == current_user.id` **directly** on the Outcome row. Re-walking the GeneratedEmail/Resume join would be redundant given the denormalized `user_id` already written at create time. Missing or wrong-owner → same non-distinguishing `NotFoundError`.
 
 **Why `user_id` is denormalized on `OUTCOMES` but not on `GENERATED_EMAILS`:** List/analytics reads filter `Outcome.user_id == current_user.id` with no join. That is the payoff of denormalizing for a locked per-user analytics read pattern. `GENERATED_EMAILS` still uses the Resume join for ownership (deferred denormalization — see `OPEN_QUESTIONS.md`). The divergence is deliberate; do not "fix" one to match the other without re-reading both decisions.
 
-**Schemas:** `OutcomeCreate` / `OutcomeOut` in `app/schemas/outcome.py`. `OutcomeOut` omits `user_id` (auth-scoped reads). `OutcomeEventType` is imported from `app/core/enums.py`.
+**CRITICAL DISCIPLINE — all OUTCOMES reads go through `app/services/outcomes.py`:** Every read of OUTCOMES (current `list_outcomes`, and any future analytics query) MUST go through this service module rather than a fresh ad-hoc query written elsewhere. That is what keeps the `voided=false` filter from being silently forgotten by a future read path. Stated in the module docstring as well as here — code, not just docs.
+
+**Related — generated-email list (picker support):** `GET /generated-emails` → `list[GeneratedEmailListOut]` (ownership via the same Resume join as GET-by-id; joins Contact/Company for display fields; does **not** join outcome status). Documented in `DATA_MODEL.md` §2.7; lives in `app/services/generated_emails.py` / `app/routers/generated_emails.py`.
+
+**Schemas:** `OutcomeCreate` / `OutcomeOut` in `app/schemas/outcome.py`. `OutcomeOut` omits `user_id` (auth-scoped reads) but includes `voided` so the retract response can confirm the resulting state (list responses still exclude voided rows, so `voided` there always reads `false`). `OutcomeEventType` is imported from `app/core/enums.py`.
 

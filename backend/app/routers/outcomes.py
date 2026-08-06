@@ -1,4 +1,4 @@
-"""Outcome HTTP endpoints: append-only create and ownership-scoped list."""
+"""Outcome HTTP endpoints: create, ownership-scoped list, and retract."""
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
@@ -31,3 +31,13 @@ def list_outcomes(
     return outcomes_service.list_outcomes(
         db, current_user, generated_email_id=generated_email_id
     )
+
+
+@router.post("/{outcome_id}/retract", response_model=OutcomeOut)
+def retract_outcome(
+    outcome_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> OutcomeOut:
+    """One-way soft-delete — sets voided=true. Idempotent if already voided."""
+    return outcomes_service.retract_outcome(db, current_user, outcome_id)

@@ -13,7 +13,7 @@ from app.models.job_description import JobDescription
 from app.models.outcome import Outcome
 from app.models.resume import Resume
 from app.models.user import User
-from app.schemas.outcome import OutcomeCreate
+from app.schemas.outcome import OutcomeCreate, OutcomeOut
 from app.services import outcomes as outcomes_service
 
 
@@ -221,3 +221,73 @@ def test_list_outcomes_scoped_and_filterable(db_session: Session):
     bob_all = outcomes_service.list_outcomes(db_session, bob)
     assert len(bob_all) == 1
     assert bob_all[0].generated_email_id == bob_email.id
+
+
+def test_retract_outcome_wrong_owner_raises_not_found(db_session: Session):
+    owner = _user(db_session, "retract-owner@example.com")
+    other = _user(db_session, "retract-other@example.com")
+    email = _generated_email(db_session, owner, domain="retract-wrong-owner.test")
+
+    outcome = outcomes_service.create_outcome(
+        db_session,
+        owner,
+        OutcomeCreate(
+            generated_email_id=email.id,
+            event_type=OutcomeEventType.SENT,
+        ),
+    )
+
+    with pytest.raises(NotFoundError):
+        outcomes_service.retract_outcome(db_session, other, outcome.id)
+
+    db_session.refresh(outcome)
+    assert outcome.voided is False
+
+
+def test_retract_outcome_voids_and_excludes_from_list(db_session: Session):
+    user = _user(db_session, "retract-success@example.com")
+    email = _generated_email(db_session, user, domain="retract-success.test")
+
+    outcome = outcomes_service.create_outcome(
+        db_session,
+        user,
+        OutcomeCreate(
+            generated_email_id=email.id,
+            event_type=OutcomeEventType.SENT,
+        ),
+    )
+    assert outcome.voided is False
+    # OutcomeOut exposes voided so retract (and create) responses confirm state.
+    assert OutcomeOut.model_validate(outcome).voided is False
+    assert len(outcomes_service.list_outcomes(db_session, user)) == 1
+
+    retracted = outcomes_service.retract_outcome(db_session, user, outcome.id)
+
+    assert retracted.id == outcome.id
+    assert retracted.voided is True
+    assert OutcomeOut.model_validate(retracted).voided is True
+    assert outcomes_service.list_outcomes(db_session, user) == []
+    # Row still exists in Postgres for audit — only the list path hides it.
+    assert db_session.query(Outcome).filter(Outcome.id == outcome.id).one().voided is True
+
+
+def test_retract_outcome_already_voided_is_idempotent(db_session: Session):
+    """Retracting an already-voided outcome is a no-op success, not an error."""
+    user = _user(db_session, "retract-idempotent@example.com")
+    email = _generated_email(db_session, user, domain="retract-idempotent.test")
+
+    outcome = outcomes_service.create_outcome(
+        db_session,
+        user,
+        OutcomeCreate(
+            generated_email_id=email.id,
+            event_type=OutcomeEventType.SENT,
+        ),
+    )
+    first = outcomes_service.retract_outcome(db_session, user, outcome.id)
+    second = outcomes_service.retract_outcome(db_session, user, outcome.id)
+
+    assert first.voided is True
+    assert second.voided is True
+    assert first.id == second.id == outcome.id
+    assert outcomes_service.list_outcomes(db_session, user) == []

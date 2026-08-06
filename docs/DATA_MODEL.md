@@ -284,11 +284,24 @@ class GeneratedEmailOut(BaseModel):
     gate_passed: bool
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
+class GeneratedEmailListOut(BaseModel):
+    """Display-focused list shape for a past-email picker — not a full row."""
+    id: int
+    subject: str
+    contact_name: str | None
+    contact_title: str | None
+    company_name: str
+    eval_score: float
+    gate_passed: bool
+    created_at: datetime
 ```
 
 **Decision:** No `GeneratedEmailCreate` — like `COMPANIES`, this entity is the *output* of a flow (IDs in → match/generate/eval → a row out), not something a user POSTs as a ready-made email. The request body for that flow is `GenerateEmailRequest` below — not a create schema.
 
 **Decision (gap filled):** `GenerateEmailRequest` was never defined in this document previously — §2.7 only specified `GeneratedEmailOut` and noted "no `GeneratedEmailCreate`" without naming the actual request body. That was a real documentation gap, not a rename: the endpoint takes `{contact_id, resume_id, job_description_id}` and the server owns generation, scoring, and persistence. Added here to match `app/schemas/generated_email.py` / `POST /generated-emails`.
+
+**Decision (gap filled — list shape):** `GeneratedEmailListOut` is a separate Out for the past-email picker list (`GET /generated-emails`), not a reuse of full `GeneratedEmailOut`. A list view is a different consumer than a single-record fetch (same XOut-per-moment pattern in §1) — full `body`, `eval_breakdown`, and `match_data` are not needed to identify which email to act on. Contact name/title and company name are joined from `CONTACTS` / `COMPANIES` at read time. Outcome status (e.g. "already marked sent") is deliberately **not** joined on this endpoint — keep it single-purpose; a future frontend can cross-reference `GET /outcomes` client-side. No pagination in v1 (same scale reasoning as resume row growth in `product_discovery_summary.md`).
 
 **Decision (revision):** `EvalGates.violation_detail: str | None = None` was added after the original schema lock. It is free-form text (not a fixed violation-type enum) populated by the LLM judge only when at least one Tier 1 gate is `False`, naming the specific problem (e.g. which claim isn't traceable to `match_data`, or how the contact name/title was wrong). It exists solely to feed `refine(email, feedback)` — it is not persisted as its own column (it rides along inside the persisted `eval_breakdown` JSONB on `GENERATED_EMAILS`). A fixed enum was considered and rejected: gate failures are too situation-specific for a closed category list to stay useful as refine feedback without constantly expanding the enum.
 
@@ -331,10 +344,15 @@ class OutcomeOut(BaseModel):
     generated_email_id: int
     event_type: OutcomeEventType
     occurred_at: datetime
+    voided: bool
     model_config = ConfigDict(from_attributes=True)
 ```
 
-**Decision:** No `OutcomeUpdate` schema. `OUTCOMES` is an append-only event log per the product doc — the only valid operations are "log a new event" and "read history." A need to edit or delete a row would indicate the model is being used incorrectly (a correction should be a new appended event, not a mutation).
+**Decision:** No `OutcomeUpdate` schema. `OUTCOMES` is an append-only event log per the product doc — the primary operations are "log a new event" and "read history." Correcting *which real event happened* (e.g. logging `replied` after `sent`) is still a new appended row, not a mutation of an existing one.
+
+**Decision (narrow retract exception):** Append-only does **not** cover the case where *an event never happened at all* — e.g. an accidental "Mark as Sent" click. Appending a compensating event would invent a fake history entry for something that didn't occur; hard-deleting would erase the audit trail. The deliberate exception is a one-way soft-delete: `voided: bool` on the ORM (`NOT NULL`, default `false`; migration `c4f8e2a91b07`), flipped only by `POST /outcomes/{outcome_id}/retract` (false→true). No un-retract path — if someone retracts a real event by mistake, the correction is logging a fresh event, not reversing the retraction. No other field is mutable. This preserves the spirit of "we don't rewrite history" (row stays in Postgres; event payload is unchanged) while allowing genuine mistakes to be corrected. It is **not** a general update/delete surface and does **not** abandon the append-only principle for real events.
+
+**Decision (correction — `OutcomeOut` includes `voided`):** An earlier note claimed `OutcomeOut` should omit `voided` because `list_outcomes` filters `voided=false`, so clients never see voided rows. That reasoning holds for list responses (where `voided` will always read `false`, which is correct and expected) but does **not** apply to `POST /outcomes/{id}/retract`, whose entire purpose is to change `voided` — its response is the one place a client most needs to confirm the resulting state, and there is no `GET /outcomes/{id}` to query it another way. `voided` is therefore included on `OutcomeOut`. Gap found during Slice 2a review; corrected in the same slice scope.
 
 **Decision (`occurred_at` semantics):** Server-stamped only (`server_default=func.now()`); no client-supplied override on `OutcomeCreate`. Means when the event was logged, not necessarily when it happened in the real world. Deliberate v1 choice favoring log-order over precise elapsed-time — see `OPEN_QUESTIONS.md` Resolved "OUTCOMES.occurred_at: server-stamped vs. client-supplied backdating" for the one-way-door caveat and revisit trigger.
 
@@ -373,6 +391,7 @@ class RefreshTokenOut(BaseModel):
 **Additive migrations after the initial 9-table schema (recorded):**
 - `97807b9a3c89` — add `user_id` to `job_descriptions` (ownership scoping identified after the initial migration existed).
 - `75ea1b948b2a` — add `user_id` to `outcomes` (denormalization for the locked analytics read pattern; table already existed from the initial migration without this column). Same distinction as future entities like `SEARCHES`: the table was created before this need was identified, so the change is a second, additive migration against an already-existing table — **not** rewritten into the original initial migration.
+- `c4f8e2a91b07` — add `voided` to `outcomes` (`NOT NULL`, default `false`; soft-delete for mistaken logs — see §2.8 retract exception). No index on `voided`: list/analytics already scope by indexed `user_id`, and a boolean alone is too low-selectivity to justify a standalone index.
 
 ### 3.2 Naming convention
 
