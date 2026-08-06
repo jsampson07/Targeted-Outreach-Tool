@@ -368,3 +368,21 @@ class CompanySearchResponse(BaseModel):
 - `frontend/public/favicon-32x32.png`
 - `frontend/public/apple-touch-icon.png` (180×180)
 
+---
+
+## 9. Outcomes: Append-Only Event Log
+
+**Decision:** `OUTCOMES` is exposed via a thin router (`app/routers/outcomes.py`) and a thick service (`app/services/outcomes.py`) — create + list only; no update/delete. Multiple rows for the same `generated_email_id` are expected (e.g. sent → replied → interview over time).
+
+**Endpoints:**
+- `POST /outcomes` — body `OutcomeCreate` `{ generated_email_id, event_type }` → `OutcomeOut` (201)
+- `GET /outcomes` — optional `generated_email_id` query param → `list[OutcomeOut]`
+
+Both require `get_current_user`. No pagination in v1 (same scale reasoning as resume row growth in `product_discovery_summary.md`).
+
+**Ownership-verification pattern (reused, not reimplemented):** `create_outcome` calls `get_generated_email_by_id(db, current_user, generated_email_id)` — the same Resume-join helper used by `GET /generated-emails/{id}` — before insert. Missing and wrong-owner emails both raise `NotFoundError` (non-distinguishing 404). After that check passes, `outcome.user_id = current_user.id` is set directly from the already-verified caller; it is never derived from client input and never inferred by re-walking the GeneratedEmail → Resume join.
+
+**Why `user_id` is denormalized on `OUTCOMES` but not on `GENERATED_EMAILS`:** List/analytics reads filter `Outcome.user_id == current_user.id` with no join. That is the payoff of denormalizing for a locked per-user analytics read pattern. `GENERATED_EMAILS` still uses the Resume join for ownership (deferred denormalization — see `OPEN_QUESTIONS.md`). The divergence is deliberate; do not "fix" one to match the other without re-reading both decisions.
+
+**Schemas:** `OutcomeCreate` / `OutcomeOut` in `app/schemas/outcome.py`. `OutcomeOut` omits `user_id` (auth-scoped reads). `OutcomeEventType` is imported from `app/core/enums.py`.
+
