@@ -17,6 +17,7 @@ import {
   writeGeneratedEmailResult,
   writeJobDescriptionResult,
   writeResumeResult,
+  writeSentOutcomeLogged,
 } from '../lib/discoverySession'
 import type {
   CompanySearchCandidate,
@@ -311,6 +312,10 @@ export function HomePage() {
     )
   }
 
+  function handleSentOutcomeLogged() {
+    writeSentOutcomeLogged()
+  }
+
   const companyIdForJd = discoveryResult?.contact?.company_id ?? null
   const contactId = discoveryResult?.contact?.id ?? null
   const resumeId = resumeForGeneration.resumeId
@@ -569,7 +574,9 @@ export function HomePage() {
           resumeId={resumeId}
           jobDescriptionId={jobDescription.id}
           initialGeneratedEmail={generatedEmail}
+          initialSentOutcomeLogged={initial.sentOutcomeLogged}
           onReady={handleGeneratedEmailReady}
+          onSentLogged={handleSentOutcomeLogged}
         />
       ) : null}
     </main>

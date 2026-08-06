@@ -2,7 +2,7 @@
 
 > For external readers: this is a living, session-overwritten implementation snapshot from active development — verified against the codebase each session, not a polished changelog or finished status report.
 
-*Overwritten each session, not appended to. Reflects verified state as of the session ending 2026-08-05 — OUTCOMES backend slice (append-only event log + denormalized `user_id`); no frontend work.*
+*Overwritten each session, not appended to. Reflects verified state as of the session ending 2026-08-05 — outcome logging Slice 1 (FRAME 6 "Mark as Sent" frontend); no backend changes.*
 
 ---
 
@@ -10,20 +10,21 @@
 
 ### Verified working (functionally exercised, not just present)
 
-- **OUTCOMES backend (this session):** Additive migration `75ea1b948b2a` adds `user_id` (FK → users, NOT NULL, indexed) to the existing `outcomes` table. ORM updated; `OutcomeCreate`/`OutcomeOut` schemas added (`app/schemas/outcome.py` — were doc-only before; `OutcomeOut` deliberately omits `user_id`). Service `app/services/outcomes.py`: `create_outcome` reuses `get_generated_email_by_id` for ownership, sets `user_id` from `current_user.id`; `list_outcomes` filters on `Outcome.user_id` directly with optional `generated_email_id`. Thin router `POST/GET /outcomes` wired in `main.py`. **3/3 service-level tests passed** (`tests/services/test_outcomes.py`: wrong-owner → NotFoundError; append-only multi-row; list scoped + filterable). No HTTP TestClient suite (thin-router pattern). No analytics view / frontend outcome UI yet.
-- **Inroad rebrand (prior):** naming + logo/favicon + header lockup; no schema/pipeline behavior changes beyond static assets.
-- **Anchor-then-sweep closing strip; Frontend FRAME 1–6; auth; Postgres; Alembic; Hunter/Mock discovery; LLM extract/match/generate/eval.**
+- **Mark as Sent on FRAME 6 (this session):** Once a generated email result exists (live generate success or `sessionStorage` rehydration), FRAME 6 shows **Mark as Sent** beside Copy. `useMutation` → `POST /outcomes` with `{ generated_email_id, event_type: "sent" }` — explicit click, no auto-fire; surfaces `ApiError.user_message` with Retry on failure. Success → disabled "✓ Marked as sent" (frontend UX guard only; backend still allows multiple SENT rows). Flag `sentOutcomeLogged` added to the existing `discoveryFlow` sessionStorage object (not a sibling key); rehydration with the flag shows confirmed state with no network call. Client: `frontend/src/lib/outcomeApi.ts` + `outcomeTypes.ts`. **Frontend suite run:** `npm run test:run -- src/pages/HomePage.test.tsx` → **25/25 passed** (includes 3 new Mark as Sent cases: success+persist, error+Retry, rehydrate confirmed). No manual browser dogfood this session. No backend changes; `POST /outcomes` reused as-is.
+- **OUTCOMES backend (prior):** migration `75ea1b948b2a` (`user_id` on outcomes); thin router + thick service; service tests previously green.
+- **Inroad rebrand; FRAME 1–6; auth; Postgres; Alembic; Hunter/Mock discovery; LLM extract/match/generate/eval; closing strip.**
 
 ### Present, but not yet exercised by anything
 
 - **`POST /contacts/discover` HTTP path** — mounted; no dedicated router TestClient suite.
 - **`POST /auth/refresh`** — backend exists; frontend does not call it on 401.
 - **GET-by-id refetch paths** — available; flow rehydrates from sessionStorage instead.
-- **`POST /outcomes` / `GET /outcomes` HTTP paths** — mounted and service-tested; no router TestClient suite and no frontend caller yet.
+- **`GET /outcomes`** — mounted and service-tested; no frontend caller yet (Slice 1 does not poll or re-verify).
+- **Other outcome event types from UI** — backend accepts them; FRAME 6 only logs `sent` for the current email (Slice 2).
 
 ### Not started
 
-- **Analytics view (frontend)**, **outcome logging UI**, **Apollo/Anymail providers**, **refresh-token rotation / cookie transport / rate-limiting**, **public/live deployment**, **`GENERATED_EMAILS.user_id` denormalization**, **resume picker reuse**, **regenerate-email control**.
+- **Analytics view (frontend)**, **Slice 2 outcome UI** (any event type against any past email), **Apollo/Anymail providers**, **refresh-token rotation / cookie transport / rate-limiting**, **public/live deployment**, **`GENERATED_EMAILS.user_id` denormalization**, **resume picker reuse**, **regenerate-email control**.
 
 ---
 
@@ -39,39 +40,36 @@
 6. **`MatchData` lives in `app/schemas/generated_email.py`.** No dedicated match HTTP endpoint.
 7. **`EvalGates.violation_detail`** + **`no_unprompted_gap_admission`** post-lock revisions; Out shapes strip `violation_detail`.
 8. **`generated_emails.py`** is the DB orchestrator; `email_generation.py` stays pure LLM. Always-insert-never-overwrite. `eval_score` = unweighted mean of five dimensions.
-9. **sessionStorage key `discoveryFlow`:** `{ company, discoveryResult, resume, jobDescription, generatedEmail }`.
+9. **sessionStorage key `discoveryFlow`:** `{ company, discoveryResult, resume, jobDescription, generatedEmail, sentOutcomeLogged }`.
 10. **`ResumeExtraction` revision:** `candidate_name` + `projects`/`ProjectEntry` with defaults for JSONB backward compat. Deterministic post-eval signature append; generation/refine prompts forbid model closings.
 11. **Model-closing strip (rounds 1–2):** `_strip_trailing_closing` between `evaluate_with_retry` and signature append. Round 2 = anchor-then-sweep.
-12. **`OUTCOMES.user_id` denormalized** (migration `75ea1b948b2a`) — deliberate divergence from deferred `GENERATED_EMAILS.user_id`; see `DATA_MODEL.md` §2.8 / `OPEN_QUESTIONS.md`. Schemas were previously documented but not implemented as a Python module — now at `app/schemas/outcome.py`.
+12. **`OUTCOMES.user_id` denormalized** (migration `75ea1b948b2a`) — deliberate divergence from deferred `GENERATED_EMAILS.user_id`; see `DATA_MODEL.md` §2.8 / `OPEN_QUESTIONS.md`.
 
 ---
 
 ## What's next
 
-1. **Frontend outcome logging UI** (and later analytics view) against `POST/GET /outcomes`.
-2. **Manual dogfood** of generated emails / closing strip in real outreach.
-3. **Revisit `candidate_name` source** if mis-extraction shows up often (OPEN_QUESTIONS trigger).
-4. **Stretch — rate-limiting** before any public deploy; deferred providers/auth hardening only if usage demands.
+1. **Outcome logging Slice 2** — generic UI to log any event type against any past generated email (see `OPEN_QUESTIONS.md` forward-note).
+2. **Analytics view** against `GET /outcomes`.
+3. **Manual dogfood** of Mark as Sent + generated emails in real outreach.
+4. **Stretch — rate-limiting** before any public deploy.
 
 ---
 
 ## Test results (this session — actual suite output)
 
 ```
-tests/services/test_outcomes.py — 3 passed
-  test_create_outcome_wrong_owner_raises_not_found
-  test_create_multiple_outcomes_same_email_succeeds
-  test_list_outcomes_scoped_and_filterable
+frontend: npm run test:run -- src/pages/HomePage.test.tsx — 25 passed
+  (includes Mark as Sent: success+persist, error+Retry, rehydrate confirmed)
 ```
 
-**Not run this session:** full backend suite, frontend tests, router TestClient for `/outcomes`, live LLM/provider calls. Migration `75ea1b948b2a` applied locally (`alembic upgrade head` → `75ea1b948b2a`).
+**Not run this session:** full frontend suite (`vitest run` without path filter), backend suite, live LLM/provider calls, manual browser walkthrough of Mark as Sent against a running API. Verification for this slice is the HomePage Vitest file only — no separate `GeneratedEmailStep` unit suite.
 
 ---
 
 ## Doc notes from this session
 
-- **`PROGRESS.md`:** overwritten for this OUTCOMES backend session.
-- **`DATA_MODEL.md`:** §2.8 revision note for `user_id`; §3.1 additive migrations list; §3.6 FK index list; §3.8 dependency diagram; brand note clarified.
-- **`OPEN_QUESTIONS.md`:** cross-ref under `GENERATED_EMAILS.user_id` explaining deliberate opposite call for OUTCOMES.
-- **`ARCHITECTURE.md`:** new §9 Outcomes router/service + ownership-reuse pattern.
-- **`product_discovery_summary.md`:** untouched — MVP #6/#7 still match; no contradiction found.
+- **`PROGRESS.md`:** overwritten for outcome-logging Slice 1 (frontend).
+- **`ARCHITECTURE.md`:** §8.2.2 extended for `sentOutcomeLogged`; §8.2.4 documents Mark as Sent + frontend-only duplicate-click guard.
+- **`OPEN_QUESTIONS.md`:** forward-note under "Not yet discussed" for Slice 2 (any event type / any past email).
+- **`DATA_MODEL.md` / `product_discovery_summary.md`:** untouched.

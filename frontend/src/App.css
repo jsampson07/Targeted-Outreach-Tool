@@ -241,7 +241,7 @@
 .discovery-found > button,
 .extraction-summary + button,
 .primary-action,
-.email-draft + button {
+.email-actions button {
   margin-top: 0.5rem;
   padding: 0.65rem 1rem;
   border: 1px solid var(--border);
@@ -252,9 +252,21 @@
   cursor: pointer;
 }
 
-.primary-action:disabled {
+.primary-action:disabled,
+.email-actions button:disabled {
   opacity: 0.65;
   cursor: not-allowed;
+}
+
+.email-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  margin-bottom: 0.25rem;
+}
+
+.email-actions button {
+  margin-top: 0;
 }
 
 .email-meta {

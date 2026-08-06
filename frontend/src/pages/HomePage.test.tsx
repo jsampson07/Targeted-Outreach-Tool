@@ -796,6 +796,7 @@ describe('HomePage discovery flow', () => {
       created_at: '2026-08-03T00:00:00Z',
     },
     generatedEmail: null as typeof sampleGeneratedEmail | null,
+    sentOutcomeLogged: false,
   }
 
   it('generate-email success shows result, persists, and hides Generate button', async () => {
@@ -905,6 +906,9 @@ describe('HomePage discovery flow', () => {
       screen.queryByRole('button', { name: /generate email/i }),
     ).not.toBeInTheDocument()
     expect(
+      screen.getByRole('button', { name: /^mark as sent$/i }),
+    ).toBeInTheDocument()
+    expect(
       screen.queryByText('Extracted job description'),
     ).not.toBeInTheDocument()
     expect(fetch).not.toHaveBeenCalled()
@@ -986,5 +990,105 @@ describe('HomePage discovery flow', () => {
       'Subject: Quick note about the Engineer role\n\nHi Alex,\n\nI noticed the Engineer opening at Acme.\n\nBest,\nJane',
     )
     expect(await screen.findByText(/copied to clipboard/i)).toBeInTheDocument()
+  })
+
+  it('Mark as Sent posts outcome, shows confirmed state, and persists flag', async () => {
+    const user = userEvent.setup()
+    sessionStorage.setItem(
+      DISCOVERY_FLOW_KEY,
+      JSON.stringify({
+        ...flowThroughJd,
+        generatedEmail: sampleGeneratedEmail,
+        sentOutcomeLogged: false,
+      }),
+    )
+    vi.mocked(fetch).mockResolvedValue(
+      jsonResponse(
+        {
+          id: 1,
+          generated_email_id: 99,
+          event_type: 'sent',
+          occurred_at: '2026-08-05T12:00:00Z',
+        },
+        201,
+      ),
+    )
+
+    renderHome()
+    expect(
+      screen.getByRole('button', { name: /^mark as sent$/i }),
+    ).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /^mark as sent$/i }))
+
+    expect(
+      await screen.findByRole('button', { name: /marked as sent/i }),
+    ).toBeDisabled()
+    expect(
+      screen.queryByRole('button', { name: /^mark as sent$/i }),
+    ).not.toBeInTheDocument()
+
+    const outcomeCall = vi.mocked(fetch).mock.calls[0]
+    expect(outcomeCall[0]).toBe('http://localhost:8000/outcomes')
+    expect(JSON.parse(outcomeCall[1]?.body as string)).toEqual({
+      generated_email_id: 99,
+      event_type: 'sent',
+    })
+    expect(
+      JSON.parse(sessionStorage.getItem(DISCOVERY_FLOW_KEY)!).sentOutcomeLogged,
+    ).toBe(true)
+  })
+
+  it('Mark as Sent error surfaces user_message and offers Retry', async () => {
+    const user = userEvent.setup()
+    sessionStorage.setItem(
+      DISCOVERY_FLOW_KEY,
+      JSON.stringify({
+        ...flowThroughJd,
+        generatedEmail: sampleGeneratedEmail,
+        sentOutcomeLogged: false,
+      }),
+    )
+    vi.mocked(fetch).mockResolvedValue(
+      jsonResponse(
+        {
+          user_message: 'Generated email not found.',
+          error_code: 'NotFoundError',
+        },
+        404,
+      ),
+    )
+
+    renderHome()
+    await user.click(screen.getByRole('button', { name: /^mark as sent$/i }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      /generated email not found/i,
+    )
+    expect(screen.getByRole('button', { name: /^retry$/i })).toBeInTheDocument()
+    expect(
+      JSON.parse(sessionStorage.getItem(DISCOVERY_FLOW_KEY)!).sentOutcomeLogged,
+    ).toBe(false)
+  })
+
+  it('rehydrates Mark as Sent confirmed state when sentOutcomeLogged is true', () => {
+    sessionStorage.setItem(
+      DISCOVERY_FLOW_KEY,
+      JSON.stringify({
+        ...flowThroughJd,
+        generatedEmail: sampleGeneratedEmail,
+        sentOutcomeLogged: true,
+      }),
+    )
+
+    renderHome()
+
+    expect(
+      screen.getByRole('button', { name: /marked as sent/i }),
+    ).toBeDisabled()
+    expect(
+      screen.queryByRole('button', { name: /^mark as sent$/i }),
+    ).not.toBeInTheDocument()
+    expect(fetch).not.toHaveBeenCalled()
   })
 })
