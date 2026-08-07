@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.core.enums import OutcomeEventType, VerificationTier
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import NotFoundError, ValidationError
 from app.core.security import hash_password
 from app.models.company import Company
 from app.models.contact import Contact
@@ -119,44 +119,42 @@ def _generated_email(
     return row
 
 
+def _create(
+    db: Session,
+    user: User,
+    email_id: int,
+    event_type: OutcomeEventType,
+) -> Outcome:
+    return outcomes_service.create_outcome(
+        db,
+        user,
+        OutcomeCreate(generated_email_id=email_id, event_type=event_type),
+    )
+
+
 def test_create_outcome_wrong_owner_raises_not_found(db_session: Session):
     owner = _user(db_session, "outcome-owner@example.com")
     other = _user(db_session, "outcome-other@example.com")
     email = _generated_email(db_session, owner, domain="outcome-wrong-owner.test")
 
     with pytest.raises(NotFoundError):
-        outcomes_service.create_outcome(
-            db_session,
-            other,
-            OutcomeCreate(
-                generated_email_id=email.id,
-                event_type=OutcomeEventType.SENT,
-            ),
-        )
+        _create(db_session, other, email.id, OutcomeEventType.SENT)
 
-    assert db_session.query(Outcome).count() == 0
+    assert (
+        db_session.query(Outcome)
+        .filter(Outcome.generated_email_id == email.id)
+        .count()
+        == 0
+    )
 
 
 def test_create_multiple_outcomes_same_email_succeeds(db_session: Session):
+    """SENT then REPLIED is the allowed funnel — not a second SENT."""
     user = _user(db_session, "outcome-append@example.com")
     email = _generated_email(db_session, user, domain="outcome-append.test")
 
-    first = outcomes_service.create_outcome(
-        db_session,
-        user,
-        OutcomeCreate(
-            generated_email_id=email.id,
-            event_type=OutcomeEventType.SENT,
-        ),
-    )
-    second = outcomes_service.create_outcome(
-        db_session,
-        user,
-        OutcomeCreate(
-            generated_email_id=email.id,
-            event_type=OutcomeEventType.REPLIED,
-        ),
-    )
+    first = _create(db_session, user, email.id, OutcomeEventType.SENT)
+    second = _create(db_session, user, email.id, OutcomeEventType.REPLIED)
 
     assert first.id != second.id
     assert first.user_id == user.id
@@ -165,7 +163,65 @@ def test_create_multiple_outcomes_same_email_succeeds(db_session: Session):
     assert second.generated_email_id == email.id
     assert first.event_type == OutcomeEventType.SENT
     assert second.event_type == OutcomeEventType.REPLIED
-    assert db_session.query(Outcome).count() == 2
+    assert (
+        db_session.query(Outcome)
+        .filter(Outcome.generated_email_id == email.id)
+        .count()
+        == 2
+    )
+
+
+def test_create_duplicate_sent_raises_validation_error(db_session: Session):
+    user = _user(db_session, "outcome-dup-sent@example.com")
+    email = _generated_email(db_session, user, domain="outcome-dup-sent.test")
+
+    _create(db_session, user, email.id, OutcomeEventType.SENT)
+
+    with pytest.raises(ValidationError) as exc_info:
+        _create(db_session, user, email.id, OutcomeEventType.SENT)
+
+    assert "already marked as sent" in exc_info.value.user_message
+    assert (
+        db_session.query(Outcome)
+        .filter(Outcome.generated_email_id == email.id)
+        .count()
+        == 1
+    )
+
+
+def test_create_non_sent_without_sent_raises_validation_error(
+    db_session: Session,
+):
+    user = _user(db_session, "outcome-need-sent@example.com")
+    email = _generated_email(db_session, user, domain="outcome-need-sent.test")
+
+    with pytest.raises(ValidationError) as exc_info:
+        _create(db_session, user, email.id, OutcomeEventType.REPLIED)
+
+    assert "Mark this email as sent" in exc_info.value.user_message
+    assert (
+        db_session.query(Outcome)
+        .filter(Outcome.generated_email_id == email.id)
+        .count()
+        == 0
+    )
+
+
+def test_create_sent_after_retract_succeeds(db_session: Session):
+    """Retracted SENT no longer blocks a fresh SENT (partial unique index)."""
+    user = _user(db_session, "outcome-resent@example.com")
+    email = _generated_email(db_session, user, domain="outcome-resent.test")
+
+    first = _create(db_session, user, email.id, OutcomeEventType.SENT)
+    outcomes_service.retract_outcome(db_session, user, first.id)
+    second = _create(db_session, user, email.id, OutcomeEventType.SENT)
+
+    assert second.id != first.id
+    assert second.voided is False
+    assert first.voided is True
+    listed = outcomes_service.list_outcomes(db_session, user)
+    assert len(listed) == 1
+    assert listed[0].id == second.id
 
 
 def test_list_outcomes_scoped_and_filterable(db_session: Session):
@@ -179,33 +235,14 @@ def test_list_outcomes_scoped_and_filterable(db_session: Session):
     )
     bob_email = _generated_email(db_session, bob, domain="outcome-bob.test")
 
-    outcomes_service.create_outcome(
-        db_session,
-        alice,
-        OutcomeCreate(
-            generated_email_id=alice_email_a.id,
-            event_type=OutcomeEventType.SENT,
-        ),
-    )
-    outcomes_service.create_outcome(
-        db_session,
-        alice,
-        OutcomeCreate(
-            generated_email_id=alice_email_b.id,
-            event_type=OutcomeEventType.NO_RESPONSE,
-        ),
-    )
-    outcomes_service.create_outcome(
-        db_session,
-        bob,
-        OutcomeCreate(
-            generated_email_id=bob_email.id,
-            event_type=OutcomeEventType.INTERVIEW,
-        ),
-    )
+    _create(db_session, alice, alice_email_a.id, OutcomeEventType.SENT)
+    _create(db_session, alice, alice_email_b.id, OutcomeEventType.SENT)
+    _create(db_session, alice, alice_email_b.id, OutcomeEventType.NO_RESPONSE)
+    _create(db_session, bob, bob_email.id, OutcomeEventType.SENT)
+    _create(db_session, bob, bob_email.id, OutcomeEventType.INTERVIEW)
 
     alice_all = outcomes_service.list_outcomes(db_session, alice)
-    assert len(alice_all) == 2
+    assert len(alice_all) == 3
     assert {row.generated_email_id for row in alice_all} == {
         alice_email_a.id,
         alice_email_b.id,
@@ -219,8 +256,11 @@ def test_list_outcomes_scoped_and_filterable(db_session: Session):
     assert alice_filtered[0].event_type == OutcomeEventType.SENT
 
     bob_all = outcomes_service.list_outcomes(db_session, bob)
-    assert len(bob_all) == 1
-    assert bob_all[0].generated_email_id == bob_email.id
+    assert len(bob_all) == 2
+    assert {row.event_type for row in bob_all} == {
+        OutcomeEventType.SENT,
+        OutcomeEventType.INTERVIEW,
+    }
 
 
 def test_retract_outcome_wrong_owner_raises_not_found(db_session: Session):
@@ -228,14 +268,7 @@ def test_retract_outcome_wrong_owner_raises_not_found(db_session: Session):
     other = _user(db_session, "retract-other@example.com")
     email = _generated_email(db_session, owner, domain="retract-wrong-owner.test")
 
-    outcome = outcomes_service.create_outcome(
-        db_session,
-        owner,
-        OutcomeCreate(
-            generated_email_id=email.id,
-            event_type=OutcomeEventType.SENT,
-        ),
-    )
+    outcome = _create(db_session, owner, email.id, OutcomeEventType.SENT)
 
     with pytest.raises(NotFoundError):
         outcomes_service.retract_outcome(db_session, other, outcome.id)
@@ -248,14 +281,7 @@ def test_retract_outcome_voids_and_excludes_from_list(db_session: Session):
     user = _user(db_session, "retract-success@example.com")
     email = _generated_email(db_session, user, domain="retract-success.test")
 
-    outcome = outcomes_service.create_outcome(
-        db_session,
-        user,
-        OutcomeCreate(
-            generated_email_id=email.id,
-            event_type=OutcomeEventType.SENT,
-        ),
-    )
+    outcome = _create(db_session, user, email.id, OutcomeEventType.SENT)
     assert outcome.voided is False
     # OutcomeOut exposes voided so retract (and create) responses confirm state.
     assert OutcomeOut.model_validate(outcome).voided is False
@@ -276,14 +302,7 @@ def test_retract_outcome_already_voided_is_idempotent(db_session: Session):
     user = _user(db_session, "retract-idempotent@example.com")
     email = _generated_email(db_session, user, domain="retract-idempotent.test")
 
-    outcome = outcomes_service.create_outcome(
-        db_session,
-        user,
-        OutcomeCreate(
-            generated_email_id=email.id,
-            event_type=OutcomeEventType.SENT,
-        ),
-    )
+    outcome = _create(db_session, user, email.id, OutcomeEventType.SENT)
     first = outcomes_service.retract_outcome(db_session, user, outcome.id)
     second = outcomes_service.retract_outcome(db_session, user, outcome.id)
 
@@ -291,3 +310,38 @@ def test_retract_outcome_already_voided_is_idempotent(db_session: Session):
     assert second.voided is True
     assert first.id == second.id == outcome.id
     assert outcomes_service.list_outcomes(db_session, user) == []
+
+
+def test_retract_sent_cascades_to_other_outcomes(db_session: Session):
+    user = _user(db_session, "retract-cascade@example.com")
+    email = _generated_email(db_session, user, domain="retract-cascade.test")
+
+    sent = _create(db_session, user, email.id, OutcomeEventType.SENT)
+    replied = _create(db_session, user, email.id, OutcomeEventType.REPLIED)
+    interview = _create(db_session, user, email.id, OutcomeEventType.INTERVIEW)
+
+    retracted = outcomes_service.retract_outcome(db_session, user, sent.id)
+
+    assert retracted.voided is True
+    db_session.refresh(replied)
+    db_session.refresh(interview)
+    assert replied.voided is True
+    assert interview.voided is True
+    assert outcomes_service.list_outcomes(db_session, user) == []
+
+
+def test_retract_non_sent_does_not_cascade(db_session: Session):
+    user = _user(db_session, "retract-no-cascade@example.com")
+    email = _generated_email(db_session, user, domain="retract-no-cascade.test")
+
+    sent = _create(db_session, user, email.id, OutcomeEventType.SENT)
+    replied = _create(db_session, user, email.id, OutcomeEventType.REPLIED)
+
+    retracted = outcomes_service.retract_outcome(db_session, user, replied.id)
+
+    assert retracted.voided is True
+    db_session.refresh(sent)
+    assert sent.voided is False
+    listed = outcomes_service.list_outcomes(db_session, user)
+    assert len(listed) == 1
+    assert listed[0].id == sent.id

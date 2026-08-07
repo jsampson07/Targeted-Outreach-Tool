@@ -76,14 +76,18 @@ export function HistoryEmailDetail({ emailId, outcomes, enabled }: Props) {
                 <span className="history-outcome-when">
                   {formatOccurredAt(outcome.occurred_at)}
                 </span>
-                <RetractOutcomeButton outcomeId={outcome.id} />
+                <RetractOutcomeButton
+                  outcomeId={outcome.id}
+                  eventType={outcome.event_type}
+                  hasOtherNonVoidedOutcomes={outcomes.length > 1}
+                />
               </li>
             ))}
           </ul>
         )}
       </div>
 
-      <LogOutcomeForm generatedEmailId={emailId} />
+      <LogOutcomeForm generatedEmailId={emailId} outcomes={outcomes} />
     </div>
   )
 }

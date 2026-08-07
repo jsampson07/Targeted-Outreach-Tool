@@ -270,7 +270,13 @@ describe('HistoryPage', () => {
     await screen.findByText(/Quick note\./)
 
     const form = screen.getByRole('form', { name: 'Log an outcome' })
-    await user.selectOptions(within(form).getByLabelText('Event type'), 'replied')
+    // Without a non-voided Sent, only Sent is enabled — log that first.
+    const select = within(form).getByLabelText('Event type')
+    expect(within(select).getByRole('option', { name: 'Sent' })).not.toBeDisabled()
+    expect(
+      within(select).getByRole('option', { name: 'Replied' }),
+    ).toBeDisabled()
+    await user.selectOptions(select, 'sent')
     await user.click(within(form).getByRole('button', { name: 'Log outcome' }))
 
     await waitFor(() => {
@@ -279,7 +285,7 @@ describe('HistoryPage', () => {
         .closest('div')
       expect(timeline).not.toBeNull()
       expect(
-        within(timeline as HTMLElement).getByText('Replied'),
+        within(timeline as HTMLElement).getByText('Sent'),
       ).toBeInTheDocument()
     })
     expect(within(row as HTMLElement).getByText('Logged')).toBeInTheDocument()
@@ -425,6 +431,133 @@ describe('HistoryPage', () => {
           '.history-email-expand',
         ),
       ).toHaveClass('is-expanded')
+    })
+  })
+
+  it('disables non-Sent options until Sent exists, then disables Sent', async () => {
+    const user = userEvent.setup()
+    let outcomes: OutcomeOut[] = []
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+
+      if (url.endsWith('/generated-emails') && method === 'GET') {
+        return jsonResponse([unloggedEmail])
+      }
+      if (url.endsWith('/outcomes') && method === 'GET') {
+        return jsonResponse(outcomes)
+      }
+      if (url.endsWith('/generated-emails/202') && method === 'GET') {
+        return jsonResponse({
+          ...fullLoggedEmail,
+          id: 202,
+          subject: unloggedEmail.subject,
+          body: 'Hi Sam,\n\nQuick note.\n\nBest regards,\nJordan',
+        })
+      }
+      if (url.endsWith('/outcomes') && method === 'POST') {
+        const body = JSON.parse(String(init?.body)) as {
+          generated_email_id: number
+          event_type: OutcomeOut['event_type']
+        }
+        const created: OutcomeOut = {
+          id: 778,
+          generated_email_id: body.generated_email_id,
+          event_type: body.event_type,
+          occurred_at: '2026-08-06T11:00:00Z',
+          voided: false,
+        }
+        outcomes = [...outcomes, created]
+        return jsonResponse(created, 201)
+      }
+      return jsonResponse({ user_message: 'Unexpected', error_code: 'Test' }, 500)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    renderHistory()
+
+    await user.click(await screen.findByRole('radio', { name: 'All' }))
+    await user.click(
+      await screen.findByText('Quick note about the TA role'),
+    )
+    await screen.findByText(/Quick note\./)
+
+    const form = screen.getByRole('form', { name: 'Log an outcome' })
+    const select = within(form).getByLabelText('Event type')
+    expect(within(select).getByRole('option', { name: 'Sent' })).not.toBeDisabled()
+    expect(
+      within(select).getByRole('option', { name: 'No response' }),
+    ).toBeDisabled()
+    expect(
+      within(select).getByRole('option', { name: 'Interview' }),
+    ).toBeDisabled()
+
+    await user.click(within(form).getByRole('button', { name: 'Log outcome' }))
+
+    await waitFor(() => {
+      expect(
+        within(select).getByRole('option', { name: 'Sent' }),
+      ).toBeDisabled()
+    })
+    expect(
+      within(select).getByRole('option', { name: 'Replied' }),
+    ).not.toBeDisabled()
+  })
+
+  it('shows cascade confirm copy when retracting Sent with other outcomes', async () => {
+    const user = userEvent.setup()
+    const repliedOutcome: OutcomeOut = {
+      id: 502,
+      generated_email_id: 101,
+      event_type: 'replied',
+      occurred_at: '2026-08-02T14:00:00Z',
+      voided: false,
+    }
+    let outcomes: OutcomeOut[] = [sentOutcome, repliedOutcome]
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+
+      if (url.endsWith('/generated-emails') && method === 'GET') {
+        return jsonResponse([loggedEmail])
+      }
+      if (url.endsWith('/outcomes') && method === 'GET') {
+        return jsonResponse(outcomes)
+      }
+      if (url.endsWith('/generated-emails/101') && method === 'GET') {
+        return jsonResponse(fullLoggedEmail)
+      }
+      if (url.endsWith('/outcomes/501/retract') && method === 'POST') {
+        outcomes = []
+        return jsonResponse({ ...sentOutcome, voided: true })
+      }
+      return jsonResponse({ user_message: 'Unexpected', error_code: 'Test' }, 500)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    renderHistory()
+
+    await user.click(await screen.findByText('Interest in Backend Role'))
+    await screen.findByText(/I am interested in the backend role/)
+
+    const timeline = screen.getByText('Outcome timeline').closest('div')
+    expect(timeline).not.toBeNull()
+    const sentItem = within(timeline as HTMLElement)
+      .getByText('Sent')
+      .closest('li')
+    expect(sentItem).not.toBeNull()
+
+    await user.click(
+      within(sentItem as HTMLElement).getByRole('button', { name: 'Retract' }),
+    )
+    expect(
+      screen.getByText(/Retracting 'Sent' will also retract all other logged outcomes/),
+    ).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Confirm' }))
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('No emails with logged outcomes yet.'),
+      ).toBeInTheDocument()
     })
   })
 

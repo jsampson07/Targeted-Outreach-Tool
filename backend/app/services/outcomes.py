@@ -10,26 +10,72 @@ analytics (``services/analytics.py`` via ``list_outcomes``) — MUST go through
 this module rather than a fresh ad-hoc query written elsewhere. That is what
 keeps the ``voided=false`` filter from being silently forgotten by a future
 read path. Do not query the ``Outcome`` model for reads outside this file.
+
+Create-time gates (app-level, backed by a partial unique index for SENT):
+- At most one non-voided SENT per ``generated_email_id``.
+- Non-SENT event types require an existing non-voided SENT first.
+
+Retract cascade: voiding a non-voided SENT also voids every other non-voided
+outcome for that email in the same transaction. Non-SENT retract is local.
 """
 
 from __future__ import annotations
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import NotFoundError
+from app.core.enums import OutcomeEventType
+from app.core.exceptions import NotFoundError, ValidationError
 from app.models.outcome import Outcome
 from app.models.user import User
 from app.schemas.outcome import OutcomeCreate
 from app.services.generated_emails import get_generated_email_by_id
 
+_ALREADY_SENT_USER_MESSAGE = (
+    "This email is already marked as sent. Retract the existing log first."
+)
+_SENT_REQUIRED_USER_MESSAGE = (
+    "Mark this email as sent before logging this outcome."
+)
+
 
 def create_outcome(
     db: Session, current_user: User, outcome_data: OutcomeCreate
 ) -> Outcome:
-    """Insert one outcome event after verifying ownership of the email."""
+    """Insert one outcome event after verifying ownership of the email.
+
+    Enforces the SENT gate before insert; the partial unique index
+    ``uq_outcomes_generated_email_id_nonvoided_sent`` is a race backstop.
+    """
     # Raises NotFoundError for missing or wrong-owner generated emails —
     # same non-distinguishing 404 as GET /generated-emails/{id}.
     get_generated_email_by_id(db, current_user, outcome_data.generated_email_id)
+
+    existing = list_outcomes(
+        db, current_user, generated_email_id=outcome_data.generated_email_id
+    )
+    has_nonvoided_sent = any(
+        row.event_type == OutcomeEventType.SENT for row in existing
+    )
+
+    if outcome_data.event_type == OutcomeEventType.SENT:
+        if has_nonvoided_sent:
+            raise ValidationError(
+                detail=(
+                    "Non-voided SENT already exists for "
+                    f"generated_email_id={outcome_data.generated_email_id}"
+                ),
+                user_message=_ALREADY_SENT_USER_MESSAGE,
+            )
+    elif not has_nonvoided_sent:
+        raise ValidationError(
+            detail=(
+                f"No non-voided SENT for generated_email_id="
+                f"{outcome_data.generated_email_id}; cannot log "
+                f"{outcome_data.event_type.value}"
+            ),
+            user_message=_SENT_REQUIRED_USER_MESSAGE,
+        )
 
     outcome = Outcome(
         user_id=current_user.id,
@@ -37,7 +83,23 @@ def create_outcome(
         event_type=outcome_data.event_type,
     )
     db.add(outcome)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        # Race backstop: two near-simultaneous SENT inserts both passed the
+        # app-level check before either committed. Translate to ValidationError
+        # — do not leak IntegrityError / 500 to the client.
+        db.rollback()
+        if outcome_data.event_type == OutcomeEventType.SENT:
+            raise ValidationError(
+                detail=(
+                    "Unique non-voided SENT constraint violated for "
+                    f"generated_email_id={outcome_data.generated_email_id} "
+                    "(likely a concurrent insert)"
+                ),
+                user_message=_ALREADY_SENT_USER_MESSAGE,
+            ) from exc
+        raise
     db.refresh(outcome)
     return outcome
 
@@ -69,6 +131,10 @@ def retract_outcome(
     Ownership uses ``Outcome.user_id`` directly — no GeneratedEmail/Resume
     re-join. Missing or wrong-owner → NotFoundError (non-distinguishing 404).
     Already-voided → no-op success (idempotent), not an error.
+
+    When retracting a non-voided SENT, also void every other non-voided
+    outcome for the same ``generated_email_id`` in this transaction.
+    Retracting a non-SENT row does not cascade.
     """
     outcome = (
         db.query(Outcome)
@@ -82,7 +148,18 @@ def retract_outcome(
             )
         )
     if not outcome.voided:
-        outcome.voided = True
+        if outcome.event_type == OutcomeEventType.SENT:
+            # Includes the SENT row itself — one pass voids the whole funnel
+            # for this email. Reads go through list_outcomes (CRITICAL DISCIPLINE).
+            to_void = list_outcomes(
+                db,
+                current_user,
+                generated_email_id=outcome.generated_email_id,
+            )
+            for row in to_void:
+                row.voided = True
+        else:
+            outcome.voided = True
         db.commit()
         db.refresh(outcome)
     return outcome

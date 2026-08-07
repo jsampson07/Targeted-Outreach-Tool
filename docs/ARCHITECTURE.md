@@ -337,7 +337,7 @@ class CompanySearchResponse(BaseModel):
 
 **Single-shot design:** Once a result exists (successful mutation **or** sessionStorage rehydration), FRAME 6 shows the result only — no Generate button again. A failed attempt (before any success) may show Retry. Regenerating after a successful result is out of scope for v1 — see `OPEN_QUESTIONS.md` Explicitly deferred.
 
-**Mark as Sent (outcome logging, Slice 1):** Once a result exists (same condition as above — live mutation success **or** sessionStorage rehydration), FRAME 6 shows an explicit **Mark as Sent** button next to Copy. Wired with `useMutation` calling `POST /outcomes` with `{ generated_email_id: <current email id>, event_type: "sent" }` — explicit click, no auto-fire, surfaces `ApiError.user_message` on failure with Retry available (same §8.2.1 pattern as generate/extract/discover). On success the button becomes a disabled confirmed state ("✓ Marked as sent"). That confirmed state is a **frontend UX guard against accidental duplicate clicks**, not a backend constraint: the API intentionally allows multiple `SENT` rows per `generated_email_id` (append-only event log; see §9 and `OPEN_QUESTIONS.md` Always-insert-never-overwrite precedent). Confirmed state is persisted as `sentOutcomeLogged: true` on the existing `discoveryFlow` object so a refresh re-shows confirmed rather than inviting a real duplicate log; no `GET /outcomes` re-check — correctness lives in the backend, the frontend only avoids the accidental double-submit. Other event types and logging against past emails live on `/history` (Slice 2b — see §8.6); FRAME 6 stays current-email `sent` only.
+**Mark as Sent (outcome logging, Slice 1):** Once a result exists (same condition as above — live mutation success **or** sessionStorage rehydration), FRAME 6 shows an explicit **Mark as Sent** button next to Copy. Wired with `useMutation` calling `POST /outcomes` with `{ generated_email_id: <current email id>, event_type: "sent" }` — explicit click, no auto-fire, surfaces `ApiError.user_message` on failure with Retry available (same §8.2.1 pattern as generate/extract/discover). On success the button becomes a disabled confirmed state ("✓ Marked as sent"). That confirmed state is a **frontend UX guard** (`sentOutcomeLogged` on `discoveryFlow`) against accidental duplicate clicks — **backed by** the backend invariant of at most one non-voided SENT per email (partial unique index + `create_outcome` gate; see §9). A rare backend rejection (stale rehydration, manual API use) still surfaces `ApiError.user_message` the same way as other mutations on this page. Confirmed state is persisted so a refresh re-shows confirmed rather than inviting a duplicate attempt; no `GET /outcomes` re-check. Other event types and logging against past emails live on `/history` (Slice 2b — see §8.6); FRAME 6 stays current-email `sent` only.
 
 **sessionStorage extension:** Added `generatedEmail: GeneratedEmailOut | null` and `sentOutcomeLogged: boolean` on the existing `discoveryFlow` key (not a sibling). Same paid-call rehydration reasoning as resume/JD (§8.2.2–§8.2.3): generation spends LLM credits (match + generate + eval, possibly silent internal retry); refresh must not re-call `POST /generated-emails`. `sentOutcomeLogged` is co-located so it clears/resets with the email it refers to (see §8.2.2).
 
@@ -389,24 +389,32 @@ class CompanySearchResponse(BaseModel):
 
 **Row expansion:** Controlled accordion via a single page-level `expandedId: number | null` on `HistoryPage` — not native `<details>`, not a Set, not per-row local open state. Clicking a row's toggle sets `expandedId` to that row's id (or `null` if it was already expanded), so at most one row is open by construction. Changing the All / Logged / Not yet logged filter resets `expandedId` to `null` so expand state does not leak across tabs. The panel animates open/closed with a CSS `grid-template-rows` + opacity transition (no animation library). Expanded content: subject/body + outcome timeline + log-any-event form + per-entry retract (inline two-click Confirm/Cancel, not `window.confirm()`).
 
-**Expected filter interaction after retract:** If retracting the last non-voided outcome for an email while the filter is Logged (the default), that email disappears from the visible list on refetch. Correct behavior — not a bug; no special-casing to keep it visible.
+**Log-form SENT gate (in-memory):** The per-row log form derives enablement from the already-fetched outcomes group for that email — no extra fetch. Disable Sent when a non-voided Sent already exists; disable the other three event types unless a non-voided Sent exists. Mirrors the backend create-time gate (§9).
+
+**Retract cascade confirm:** Retracting a Sent row when other non-voided outcomes exist for that email shows inline cascade copy ("Retracting 'Sent' will also retract all other logged outcomes…") before Confirm/Cancel — still the existing inline pattern, not `window.confirm()` or a modal. Plain retract confirm when Sent is alone (or when retracting a non-Sent row). Existing `OUTCOMES_QUERY_KEY` invalidation refetches the full list, so cascade-voided siblings disappear without extra client logic.
+
+**Expected filter interaction after retract:** If retracting the last non-voided outcome for an email while the filter is Logged (the default), that email disappears from the visible list on refetch. Correct behavior — not a bug; no special-casing to keep it visible. Same after a SENT cascade retract that voids every remaining outcome for that email.
 
 ---
 
 ## 9. Outcomes: Append-Only Event Log (+ Narrow Retract)
 
-**Decision:** `OUTCOMES` is exposed via a thin router (`app/routers/outcomes.py`) and a thick service (`app/services/outcomes.py`) — create, list, and a one-way retract action. Multiple rows for the same `generated_email_id` are expected (e.g. sent → replied → interview over time). There is no general update/delete or un-retract path.
+**Decision:** `OUTCOMES` is exposed via a thin router (`app/routers/outcomes.py`) and a thick service (`app/services/outcomes.py`) — create, list, and a one-way retract action. Multiple rows for the same `generated_email_id` are expected for a funnel (sent → replied → interview over time), but **at most one non-voided SENT** per email. There is no general update/delete or un-retract path.
 
 **Endpoints:**
 - `POST /outcomes` — body `OutcomeCreate` `{ generated_email_id, event_type }` → `OutcomeOut` (201)
 - `GET /outcomes` — optional `generated_email_id` query param → `list[OutcomeOut]` (non-voided only)
-- `POST /outcomes/{outcome_id}/retract` — action-style state transition (same convention as `POST /resumes/{id}/extract`), sets `voided=true` → `OutcomeOut`. Idempotent if already voided.
+- `POST /outcomes/{outcome_id}/retract` — action-style state transition (same convention as `POST /resumes/{id}/extract`), sets `voided=true` → `OutcomeOut`. Idempotent if already voided. Retracting a non-voided SENT also voids every other non-voided outcome for that email in the same transaction.
 
 Both create/list and retract require `get_current_user`. No pagination in v1 (same scale reasoning as resume row growth in `product_discovery_summary.md`).
 
 **Ownership-verification patterns:**
 - **Create:** `create_outcome` calls `get_generated_email_by_id(db, current_user, generated_email_id)` — the same Resume-join helper used by `GET /generated-emails/{id}` — before insert. Missing and wrong-owner emails both raise `NotFoundError` (non-distinguishing 404). After that check passes, `outcome.user_id = current_user.id` is set directly from the already-verified caller; it is never derived from client input and never inferred by re-walking the GeneratedEmail → Resume join.
 - **Retract:** simpler — verifies `outcome.user_id == current_user.id` **directly** on the Outcome row. Re-walking the GeneratedEmail/Resume join would be redundant given the denormalized `user_id` already written at create time. Missing or wrong-owner → same non-distinguishing `NotFoundError`.
+
+**Create-time SENT gate:** Before insert, `create_outcome` reads existing non-voided rows via `list_outcomes` (same CRITICAL DISCIPLINE). If `event_type == SENT` and a non-voided SENT already exists → `ValidationError` ("already marked as sent…"). If `event_type != SENT` and no non-voided SENT exists → `ValidationError` ("Mark this email as sent before…"). DB backstop: partial unique index `uq_outcomes_generated_email_id_nonvoided_sent` (migration `e8a3c71f2049`); concurrent SENT races that pass the app check raise `IntegrityError`, which is translated to the same already-sent `ValidationError` — never leaked as a 500.
+
+**Retract cascade (SENT only):** When retracting a non-voided SENT, `retract_outcome` voids that row **and** every other non-voided outcome for the same `generated_email_id` in one transaction (siblings discovered via `list_outcomes`). Retracting a non-SENT row voids only that row. After a SENT cascade retract, re-logging Sent is a fresh insert (voided SENT rows do not block the partial unique index).
 
 **Why `user_id` is denormalized on `OUTCOMES` but not on `GENERATED_EMAILS`:** List/analytics reads filter `Outcome.user_id == current_user.id` with no join. That is the payoff of denormalizing for a locked per-user analytics read pattern. `GENERATED_EMAILS` still uses the Resume join for ownership (deferred denormalization — see `OPEN_QUESTIONS.md`). The divergence is deliberate; do not "fix" one to match the other without re-reading both decisions.
 
@@ -457,15 +465,14 @@ Internal return shape is a frozen dataclass `GeneratedEmailAnalyticsFields` — 
 
 **Null vs 0.0 for rates:** `overall_reply_rate` and any per-bucket `reply_rate` is `null`/`None` when that scope's sent count is 0 — never fabricate a `0.0` for "no data," only for "data that measured zero." Per-bucket rows are only emitted when `sent > 0`, so their `reply_rate` is never null in the response schema.
 
-**Interaction with retract (expected, not a bug):** if a `SENT` outcome is
-retracted while a `REPLIED`/`INTERVIEW` outcome for the same email is still
-active, that email drops out of `sent_ids` entirely — so it disappears from
-`total_sent`, `total_replied`, and every breakdown bucket, even though the
-reply is still recorded, non-voided, in `OUTCOMES`. Direct consequence of
-`sent_and_replied = sent_ids ∩ replied_ids` requiring both; not special-cased.
-Same precedent as `/history`'s documented "retract can drop a row from the
-default Logged filter" behavior (§8.6) — worth remembering if a `REPLIED` row
-visibly exists in the DB but isn't reflected in `/analytics`.
+**Interaction with retract (expected, not a bug):** Retracting a non-voided
+`SENT` **cascades** — every other non-voided outcome for that email is voided
+in the same transaction (§9). The email therefore drops out of both
+`sent_ids` and `replied_ids` (and every breakdown bucket) together; there is
+no longer a lingering non-voided `REPLIED`/`INTERVIEW` row after a SENT
+retract. Retracting only a non-SENT row leaves SENT (and analytics membership)
+intact. Same "row can disappear from the default Logged filter on `/history`"
+precedent (§8.6) applies when a cascade clears the last non-voided outcomes.
 
 ### 10.4 No caching
 

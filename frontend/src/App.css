@@ -700,6 +700,12 @@
   gap: 0.4rem 0.5rem;
 }
 
+.retract-confirm-copy {
+  flex: 1 1 12rem;
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
 .log-outcome-form {
   display: flex;
   flex-wrap: wrap;
