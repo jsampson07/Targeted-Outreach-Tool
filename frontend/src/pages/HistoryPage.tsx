@@ -29,6 +29,8 @@ import {
 export function HistoryPage() {
   const { logout } = useAuth()
   const [filter, setFilter] = useState<HistoryFilterValue>('logged')
+  /** At most one expanded row; null = all collapsed. Reset on filter change. */
+  const [expandedId, setExpandedId] = useState<number | null>(null)
 
   const emailsQuery = useQuery({
     queryKey: GENERATED_EMAILS_QUERY_KEY,
@@ -53,6 +55,15 @@ export function HistoryPage() {
     }
     return emails.filter((email) => (outcomesByEmail.get(email.id)?.length ?? 0) === 0)
   }, [emailsQuery.data, filter, outcomesByEmail])
+
+  function handleFilterChange(value: HistoryFilterValue) {
+    setFilter(value)
+    setExpandedId(null)
+  }
+
+  function handleRowToggle(emailId: number) {
+    setExpandedId((current) => (current === emailId ? null : emailId))
+  }
 
   const loading = emailsQuery.isPending || outcomesQuery.isPending
   const loadError =
@@ -80,7 +91,7 @@ export function HistoryPage() {
         reload from the server on each visit (no session cache).
       </p>
 
-      <HistoryFilter value={filter} onChange={setFilter} />
+      <HistoryFilter value={filter} onChange={handleFilterChange} />
 
       {loading ? (
         <p className="discovery-muted" role="status">
@@ -110,6 +121,8 @@ export function HistoryPage() {
                 <HistoryEmailRow
                   email={email}
                   outcomes={outcomesByEmail.get(email.id) ?? []}
+                  expanded={expandedId === email.id}
+                  onToggle={() => handleRowToggle(email.id)}
                 />
               </li>
             ))}
