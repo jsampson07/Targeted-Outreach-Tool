@@ -260,7 +260,9 @@ describe('HistoryPage', () => {
       await screen.findByText('Quick note about the TA role'),
     ).toBeInTheDocument()
 
-    const row = screen.getByText('Quick note about the TA role').closest('details')
+    const row = screen
+      .getByText('Quick note about the TA role')
+      .closest('.history-email-row')
     expect(row).not.toBeNull()
     expect(within(row as HTMLElement).getByText('Not logged')).toBeInTheDocument()
 
@@ -344,5 +346,139 @@ describe('HistoryPage', () => {
     expect(
       screen.getByText('No emails with logged outcomes yet.'),
     ).toBeInTheDocument()
+  })
+
+  it('expands only one row at a time (accordion)', async () => {
+    const user = userEvent.setup()
+    const secondLogged: GeneratedEmailListOut = {
+      ...loggedEmail,
+      id: 102,
+      subject: 'Follow-up on platform role',
+    }
+    const secondOutcome: OutcomeOut = {
+      ...sentOutcome,
+      id: 502,
+      generated_email_id: 102,
+    }
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/generated-emails')) {
+        return jsonResponse([loggedEmail, secondLogged])
+      }
+      if (url.endsWith('/outcomes')) {
+        return jsonResponse([sentOutcome, secondOutcome])
+      }
+      if (url.endsWith('/generated-emails/101') && (!init?.method || init.method === 'GET')) {
+        return jsonResponse(fullLoggedEmail)
+      }
+      if (url.endsWith('/generated-emails/102') && (!init?.method || init.method === 'GET')) {
+        return jsonResponse({
+          ...fullLoggedEmail,
+          id: 102,
+          subject: secondLogged.subject,
+          body: 'Hi,\n\nFollowing up on the platform role.\n',
+        })
+      }
+      return jsonResponse({ user_message: 'Unexpected', error_code: 'Test' }, 500)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    renderHistory()
+
+    const firstSubject = () =>
+      screen.getByText('Interest in Backend Role', {
+        selector: '.history-email-subject',
+      })
+    const secondSubject = () =>
+      screen.getByText('Follow-up on platform role', {
+        selector: '.history-email-subject',
+      })
+
+    await waitFor(() => {
+      expect(firstSubject()).toBeInTheDocument()
+    })
+    await user.click(firstSubject())
+    expect(
+      await screen.findByText(/I am interested in the backend role/),
+    ).toBeInTheDocument()
+
+    await user.click(secondSubject())
+    expect(
+      await screen.findByText(/Following up on the platform role/),
+    ).toBeInTheDocument()
+
+    expect(firstSubject().closest('button')).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    )
+    expect(secondSubject().closest('button')).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    )
+    await waitFor(() => {
+      expect(
+        firstSubject().closest('.history-email-row')?.querySelector(
+          '.history-email-expand',
+        ),
+      ).not.toHaveClass('is-expanded')
+      expect(
+        secondSubject().closest('.history-email-row')?.querySelector(
+          '.history-email-expand',
+        ),
+      ).toHaveClass('is-expanded')
+    })
+  })
+
+  it('collapses the expanded row when the filter tab changes', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.endsWith('/generated-emails')) {
+        return jsonResponse([loggedEmail, unloggedEmail])
+      }
+      if (url.endsWith('/outcomes')) {
+        return jsonResponse([sentOutcome])
+      }
+      if (url.endsWith('/generated-emails/101') && (!init?.method || init.method === 'GET')) {
+        return jsonResponse(fullLoggedEmail)
+      }
+      return jsonResponse({ user_message: 'Unexpected', error_code: 'Test' }, 500)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    renderHistory()
+
+    const subject = () =>
+      screen.getByText('Interest in Backend Role', {
+        selector: '.history-email-subject',
+      })
+
+    await waitFor(() => {
+      expect(subject()).toBeInTheDocument()
+    })
+    await user.click(subject())
+    expect(
+      await screen.findByText(/I am interested in the backend role/),
+    ).toBeInTheDocument()
+    expect(subject().closest('button')).toHaveAttribute('aria-expanded', 'true')
+    await waitFor(() => {
+      expect(
+        subject().closest('.history-email-row')?.querySelector(
+          '.history-email-expand',
+        ),
+      ).toHaveClass('is-expanded')
+    })
+
+    await user.click(screen.getByRole('radio', { name: 'All' }))
+    expect(subject()).toBeInTheDocument()
+    expect(
+      screen.getByText('Quick note about the TA role', {
+        selector: '.history-email-subject',
+      }),
+    ).toBeInTheDocument()
+    expect(subject().closest('button')).toHaveAttribute('aria-expanded', 'false')
+    expect(
+      subject().closest('.history-email-row')?.querySelector(
+        '.history-email-expand',
+      ),
+    ).not.toHaveClass('is-expanded')
   })
 })

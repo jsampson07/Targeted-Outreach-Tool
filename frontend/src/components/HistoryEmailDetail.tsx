@@ -41,7 +41,7 @@ export function HistoryEmailDetail({ emailId, outcomes, enabled }: Props) {
 
   return (
     <div className="history-email-detail">
-      {detailQuery.isPending ? (
+      {enabled && detailQuery.isPending ? (
         <p className="discovery-muted" role="status">
           Loading email…
         </p>

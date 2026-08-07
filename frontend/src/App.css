@@ -567,10 +567,48 @@
 .history-email-summary {
   display: flex;
   flex-direction: column;
+  align-items: stretch;
   gap: 0.45rem;
+  width: 100%;
+  margin: 0;
   padding: 0.85rem 0.9rem;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  font: inherit;
   cursor: pointer;
   color: var(--text-h);
+}
+
+.history-email-summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Accordion panel: grid 0fr→1fr animates open/close without a JS library. */
+.history-email-expand {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.28s ease;
+}
+
+.history-email-expand.is-expanded {
+  grid-template-rows: 1fr;
+}
+
+.history-email-expand-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+.history-email-expand .history-email-detail {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.history-email-expand.is-expanded .history-email-detail {
+  opacity: 1;
 }
 
 .history-email-subject {
