@@ -10,8 +10,8 @@ type AppHeaderProps = {
 
 /**
  * Persistent brand lockup + main nav for authenticated routes
- * (ARCHITECTURE.md §8.1 / §8.5 / §8.6). Logo mark + "Inroad" wordmark primary;
- * "Targeted Outreach Platform" caption always visible.
+ * (ARCHITECTURE.md §8.1 / §8.5 / §8.6 / §10). Logo mark + "Inroad" wordmark
+ * primary; "Targeted Outreach Platform" caption always visible.
  */
 export function AppHeader({ actions }: AppHeaderProps) {
   return (
@@ -35,6 +35,9 @@ export function AppHeader({ actions }: AppHeaderProps) {
         </NavLink>
         <NavLink to="/history" className="app-nav-link">
           History
+        </NavLink>
+        <NavLink to="/analytics" className="app-nav-link">
+          Analytics
         </NavLink>
       </nav>
       {actions ? (

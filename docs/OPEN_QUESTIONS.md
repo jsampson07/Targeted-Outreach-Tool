@@ -63,6 +63,12 @@ FRAME 2 (contact discovery) and FRAME 5 (JD creation) both prompt the user for a
 ### Single-shot generate-email vs. regenerate control (FRAME 6)
 v1 ships **single-shot only**: once `POST /generated-emails` succeeds (or a prior result is rehydrated from `sessionStorage`), FRAME 6 shows the result and does not offer Generate again. A failed attempt before any success may Retry — that is not regeneration after success. Backend already always-inserts a new `GENERATED_EMAILS` row per successful call (see Resolved "Always-insert-never-overwrite"), so a regenerate UI would be straightforward mechanically; the product choice is not to expose it yet. Stated trigger to revisit: if real usage (the developer's own job search) shows regeneration is actually needed, **first** improve generation/eval prompt quality; add an explicit regenerate control only as a fallback if prompt work is insufficient — do not default to the UI fix first.
 
+### Analytics cross-tab (confidence tier × eval-score bucket)
+v1 ships two **separate** breakdown lists on `AnalyticsSummary` — by confidence tier and by eval-score bucket — not a cross-tabulated matrix (see `ARCHITECTURE.md` §10). Cross-tabbing was explicitly rejected for v1 because it fragments an already-small personal-outreach sample into near-empty cells, producing rates that look precise but aren't informative. Stated trigger to revisit: once real dogfooding volume makes most tier×bucket cells non-trivial (rough rule of thumb: enough sent emails that several cells have `n` well above single digits), and a concrete product question needs the interaction (e.g. "do high-eval emails to pattern-guessed contacts reply differently?"). Until then, keep the two independent lists.
+
+### Analytics date-range filtering
+`GET /analytics/summary` aggregates over the caller's full outcome history with no `from`/`to` query params. Fine for early personal use where the whole log is the relevant window. Stated trigger to revisit: once enough outreach has accumulated that "all time" mixes meaningfully different job-search phases (e.g. last month vs. three months ago), or a concrete need to compare periods appears during dogfooding. Implementation would be additive query params filtering on `OUTCOMES.occurred_at` (server-stamped log time — see Resolved `occurred_at` note) before the pure `_compute_summary` step; no schema change required.
+
 ---
 
 ## Not yet discussed (on the list, conversation hasn't reached them)
@@ -175,7 +181,10 @@ proves too noisy in real use.
 - **2a (backend):** `GET /generated-emails` → `list[GeneratedEmailListOut]` (ownership via Resume join; display fields only; no outcome-status join); `POST /outcomes/{id}/retract` (one-way `voided=true`; `list_outcomes` excludes voided). See `ARCHITECTURE.md` §9 / `DATA_MODEL.md` §2.7–2.8.
 - **2b (frontend):** Protected `/history` route — list past emails, client-side All/Logged/Not-yet-logged filter (default Logged), expand for full body + outcome timeline, log any `OutcomeEventType`, retract with inline confirm. Uses `useQuery` for free list reads; no `sessionStorage` (contrast with `/` discovery flow). See `ARCHITECTURE.md` §8.6.
 
-Slice 1's FRAME 6 Mark as Sent remains as a separate current-email-only convenience surface; it is not the full outcome-logging product surface. Analytics aggregation is still a future slice.
+Slice 1's FRAME 6 Mark as Sent remains as a separate current-email-only convenience surface; it is not the full outcome-logging product surface. Analytics aggregation shipped separately as MVP feature #7 — see Resolved "Analytics view (MVP feature #7)" below / `ARCHITECTURE.md` §10.
 
 ### OUTCOMES row-growth / retention
 **Resolved (Outcome logging Slice 2a, 2026-08-06 — deliberately not designed for):** Voided rows accumulate; so do legitimate event rows. Row growth on `OUTCOMES` was considered and deliberately not designed for — same reasoning/precedent as resume-table row growth in `product_discovery_summary.md` ("not a real concern at this project's realistic scale"). No TTL, archival, or hard-purge path in v1. If it ever becomes a UI clutter problem, solve with normal product patterns (search/sort/pagination), not a schema change.
+
+### Analytics view (MVP feature #7)
+**Resolved (2026-08-06):** `GET /analytics/summary` → `AnalyticsSummary` with overall reply rate + separate by-confidence-tier and by-eval-score-bucket lists. Pure `_compute_summary` + thin DB wrapper; outcomes via `list_outcomes`; email/tier fields via `list_generated_emails_for_analytics`. Frontend protected `/analytics` page with `useQuery`, AppHeader Analytics nav link. Locked numerator/denominator/bucketing/n=/null-vs-zero/no-cache decisions recorded in `ARCHITECTURE.md` §10 / `DATA_MODEL.md` §2.10. Cross-tab and date-range filtering deferred — see Explicitly deferred above.

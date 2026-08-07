@@ -2,7 +2,7 @@
 
 > For external readers: this is a living, session-overwritten implementation snapshot from active development — verified against the codebase each session, not a polished changelog or finished status report.
 
-*Overwritten each session, not appended to. Reflects verified state as of the session ending 2026-08-06 — outcome logging Slice 2b (frontend `/history` page).*
+*Overwritten each session, not appended to. Reflects verified state as of the session ending 2026-08-06 — analytics view (MVP feature #7).*
 
 ---
 
@@ -10,32 +10,35 @@
 
 ### Verified working (functionally exercised, not just present)
 
-- **Slice 2b frontend (this session):**
-  - Protected route `/history` (`HistoryPage`) + Search/History nav on `AppHeader` (previously brand + actions only; no shared layout — each page still mounts the header).
-  - `useQuery` for `GET /generated-emails` + `GET /outcomes` (first genuine read-only TanStack Query usage; contrast with §8.2.1 all-`useMutation` credit-spending mutations).
-  - No `sessionStorage` on `/history` (deliberate contrast with `/` `discoveryFlow` — free idempotent reads, refetch on mount is correct).
-  - Client-side group outcomes by `generated_email_id` (O(1) network for list+timeline, not O(n) per-row fetches); filter All / Logged / Not yet logged (default **Logged**).
-  - Row expand via `<details>`: `getGeneratedEmailById` on first open; timeline from already-loaded outcomes; log any `OutcomeEventType` via existing `createOutcome`; retract via `retractOutcome` with inline two-click confirm.
-  - API client additions: `listGeneratedEmails`, `getGeneratedEmailById`, `listOutcomes`, `retractOutcome`; `GeneratedEmailListOut` type; `OutcomeOut.voided` added (was missing on the frontend type).
+- **Analytics view (this session — MVP feature #7):**
+  - Backend: `GET /analytics/summary` → `AnalyticsSummary` (schemas in `app/schemas/analytics.py`). Pure `_compute_summary` + thin `get_reply_rate_summary` in `app/services/analytics.py`. Outcomes via `list_outcomes` only; email/tier fields via new `list_generated_emails_for_analytics` in `generated_emails.py` (analytics never queries `Outcome` / `GeneratedEmail` / `Contact` directly).
+  - Locked math: replied = distinct email with ≥1 non-voided `{REPLIED, INTERVIEW}` **and** a SENT; sent = distinct email with ≥1 non-voided SENT; tier = `best_verification_tier` as-is; eval buckets `"<3"`/`"3-4"`/`"4+"` with `[0,3)` / `[3,4)` / `[4,5]` boundaries; omit buckets with `sent==0`; `overall_reply_rate=None` when `total_sent==0`; no caching.
+  - Frontend: protected `/analytics` (`AnalyticsPage`) + Analytics nav link on `AppHeader` (now Search / History / Analytics). `useQuery` + `getAnalyticsSummary()`; no `sessionStorage`. Overall rate with `n=`, two breakdown lists, zero-data "no sent emails" state, short sample-size caveat.
+- **Backend tests run this session (analytics pure function):**
+  ```
+  .venv/bin/python -m pytest tests/services/test_analytics.py -q
+  → 8 passed
+  ```
+  Covers: empty → null rate + empty lists; SENT-only → `reply_rate=0.0`; REPLIED+INTERVIEW dedup; INTERVIEW-alone counts; duplicate SENT dedup; no-SENT excluded; eval boundaries 3.0/4.0; zero-sent tier omitted.
 - **Frontend tests run this session (all passed):**
   ```
   npm run test:run
-  → Test Files  9 passed (9)
-  → Tests  53 passed (53)
+  → Test Files  10 passed (10)
+  → Tests  56 passed (56)
   ```
-  History coverage: default Logged hides unlogged; All / Not yet logged toggles; expand fetches full email + shows timeline; log new event type updates timeline + badge; retract removes entry and drops row from default Logged filter when it was the last outcome.
+  Analytics coverage: overall rate + `n=` + both breakdowns; null-rate empty state (not 0%); omitted zero-sent buckets not invented client-side.
   `tsc -b` clean.
-- **Slice 2a backend (prior):** unchanged — `GET /generated-emails`, `POST /outcomes/{id}/retract`, `OutcomeOut.voided`, migration `c4f8e2a91b07`.
-- **FRAME 6 Mark as Sent (Slice 1):** unchanged; separate surface.
+- **Prior slices unchanged:** `/history` Slice 2b, outcomes Slice 2a, FRAME 6 Mark as Sent.
 
 ### Present, but not yet exercised by anything
 
-- **Manual browser dogfood of `/history`** — not done this session. Unit/integration tests cover the behaviors above against mocked fetch; live walkthrough against a running API (list, expand, log `replied`/`interview`, retract, filter disappearance) is still pending.
-- **Router-level HTTP TestClient suites** for Slice 2a list/retract endpoints — still service-level only from 2a.
+- **Manual browser dogfood of `/analytics`** — not done this session. Unit tests cover aggregation math and page rendering against mocked fetch; live walkthrough against a running API (log SENT/REPLIED on `/history`, confirm rates on `/analytics`) is still pending.
+- **Manual browser dogfood of `/history`** — still pending from prior session.
+- **Router-level HTTP TestClient suites** for analytics / Slice 2a list/retract — still service-level / pure-function only.
 
 ### Not started
 
-- **Analytics view**, **Apollo/Anymail providers**, **refresh-token rotation / cookie transport / rate-limiting**, **public/live deployment**, **`GENERATED_EMAILS.user_id` denormalization**, **resume picker reuse**, **regenerate-email control**.
+- **Apollo/Anymail providers**, **refresh-token rotation / cookie transport / rate-limiting**, **public/live deployment**, **`GENERATED_EMAILS.user_id` denormalization**, **resume picker reuse**, **regenerate-email control**, analytics cross-tab / date-range (deferred — see `OPEN_QUESTIONS.md`).
 
 ---
 
@@ -50,38 +53,44 @@
 5. **LLM defaults:** `claude-haiku-4-5`, `llm_max_retries=1`, `max_tokens=4096`, `LLMExtractionError` → 502.
 6. **`MatchData` lives in `app/schemas/generated_email.py`.** No dedicated match HTTP endpoint.
 7. **`EvalGates.violation_detail`** + **`no_unprompted_gap_admission`** post-lock revisions; Out shapes strip `violation_detail`.
-8. **`generated_emails.py`** is the DB orchestrator; always-insert-never-overwrite. `eval_score` = unweighted mean of five dimensions.
-9. **sessionStorage key `discoveryFlow`:** `{ company, discoveryResult, resume, jobDescription, generatedEmail, sentOutcomeLogged }` — home flow only; `/history` deliberately has none.
+8. **`generated_emails.py`** is the DB orchestrator; always-insert-never-overwrite. `eval_score` = unweighted mean of five dimensions. Now also owns `list_generated_emails_for_analytics`.
+9. **sessionStorage key `discoveryFlow`:** home flow only; `/history` and `/analytics` deliberately have none.
 10. **`ResumeExtraction` revision:** `candidate_name` + `projects`/`ProjectEntry`. Deterministic post-eval signature append + `_strip_trailing_closing`.
 11. **`OUTCOMES.user_id` denormalized** (migration `75ea1b948b2a`); **`voided`** added (migration `c4f8e2a91b07`) — narrow retract exception to append-only; see `DATA_MODEL.md` §2.8 / `OPEN_QUESTIONS.md`.
+
+**Doc/code check this session (no drift found to reconcile):** Before building, verified AppHeader was Search/History only (docs §8.5/§8.6 matched), router had `/` + `/history` only, and API clients use per-feature `*Api.ts` + `*Types.ts` + shared `request()` — analytics followed those live conventions. Nav/routing docs updated for Analytics.
 
 ---
 
 ## What's next
 
-1. **Manual browser dogfood** of `/history` (and Mark as Sent + generated emails in real outreach).
-2. **Analytics view** against `GET /outcomes` (must use `services/outcomes.py`).
-3. **Stretch — rate-limiting** before any public deploy.
+1. **Manual browser dogfood** of `/analytics` and `/history` (and Mark as Sent + generated emails in real outreach).
+2. **Stretch — rate-limiting** before any public deploy.
 
 ---
 
 ## Test results (this session — actual suite output)
 
 ```
+backend: .venv/bin/python -m pytest tests/services/test_analytics.py -q
+→ 8 passed
+
 frontend: npm run test:run
-→ Test Files  9 passed (9)
-→ Tests  53 passed (53)
+→ Test Files  10 passed (10)
+→ Tests  56 passed (56)
 
 frontend: npx tsc -b
 → exit 0 (clean)
 ```
 
-**Not run this session:** full backend suite, live LLM/provider calls, manual browser walkthrough of `/history`.
+**Not run this session:** full backend suite, live LLM/provider calls, manual browser walkthrough of `/analytics` or `/history`.
 
 ---
 
 ## Doc notes from this session
 
-- **`PROGRESS.md`:** overwritten for Slice 2b; explicit note that manual browser dogfood of `/history` is still pending.
-- **`ARCHITECTURE.md`:** §8.1 routing updated for `/history`; §8.5 AppHeader nav; new §8.6 (no sessionStorage contrast with §8.2.2, `useQuery` contrast with §8.2.1, client-side grouping, filter default).
-- **`OPEN_QUESTIONS.md`:** Slice 2 entry moved to Resolved (2a+2b done); analytics still future.
+- **`PROGRESS.md`:** overwritten for analytics view; explicit note that manual browser dogfood of `/analytics` is still pending.
+- **`ARCHITECTURE.md`:** §8.1 routing + §8.5 AppHeader nav updated for `/analytics`; new §10 (pure/orchestration split, entity-read discipline, locked math, no-cache, frontend).
+- **`DATA_MODEL.md`:** new §2.10 AnalyticsSummary schemas — computed-on-read, no migration.
+- **`OPEN_QUESTIONS.md`:** new deferred entries for cross-tab and date-range filtering; Slice 2 resolved note corrected; new Resolved entry for analytics view.
+- **`product_discovery_summary.md`:** left as-is — MVP feature #7 description still accurate.

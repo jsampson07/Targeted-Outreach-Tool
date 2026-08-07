@@ -6,10 +6,10 @@ existing Resume-join helper (``get_generated_email_by_id``) on create;
 Retract verifies ownership via ``Outcome.user_id`` (already denormalized).
 
 CRITICAL DISCIPLINE: every read of OUTCOMES — current ``list_outcomes``, and
-any future analytics query — MUST go through this module rather than a fresh
-ad-hoc query written elsewhere. That is what keeps the ``voided=false`` filter
-from being silently forgotten by a future read path. Do not query the
-``Outcome`` model for reads outside this file.
+analytics (``services/analytics.py`` via ``list_outcomes``) — MUST go through
+this module rather than a fresh ad-hoc query written elsewhere. That is what
+keeps the ``voided=false`` filter from being silently forgotten by a future
+read path. Do not query the ``Outcome`` model for reads outside this file.
 """
 
 from __future__ import annotations

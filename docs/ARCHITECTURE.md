@@ -253,9 +253,9 @@ class CompanySearchResponse(BaseModel):
 
 ### 8.1 Routing
 
-**Decision:** `react-router-dom` (`BrowserRouter`) with public `/login` `/signup` routes and a `ProtectedRoute` wrapper that redirects to `/login` when `!isAuthenticated`. Protected product routes: `/` (discovery/generate flow as accumulating frames on one page) and `/history` (past emails + outcomes — see §8.6). Flow steps on `/` remain component state, **not** one route per frame.
+**Decision:** `react-router-dom` (`BrowserRouter`) with public `/login` `/signup` routes and a `ProtectedRoute` wrapper that redirects to `/login` when `!isAuthenticated`. Protected product routes: `/` (discovery/generate flow as accumulating frames on one page), `/history` (past emails + outcomes — see §8.6), and `/analytics` (reply-rate summary — see §10). Flow steps on `/` remain component state, **not** one route per frame.
 
-**Reasoning:** At this scale there is no serious alternative worth debating — React Router is the default for React SPAs, and the protected-route pattern matches the JWT-gated backend without inventing a custom gate. Flow steps (search → role title → discovery → resume → JD → generate email) are component state on `/`, not URL segments: deep-linking mid-flow is not a v1 need, and keeping one route for that linear demo flow avoids inventing a multi-step URL scheme. `/history` is a separate route because it is a distinct browse/log surface, not a step in that linear flow.
+**Reasoning:** At this scale there is no serious alternative worth debating — React Router is the default for React SPAs, and the protected-route pattern matches the JWT-gated backend without inventing a custom gate. Flow steps (search → role title → discovery → resume → JD → generate email) are component state on `/`, not URL segments: deep-linking mid-flow is not a v1 need, and keeping one route for that linear demo flow avoids inventing a multi-step URL scheme. `/history` and `/analytics` are separate routes because they are distinct browse/measure surfaces, not steps in that linear flow.
 
 ### 8.2 Server state: TanStack Query
 
@@ -361,7 +361,7 @@ class CompanySearchResponse(BaseModel):
 
 ### 8.5 Brand assets
 
-**Decision:** Product brand is **Inroad** (full first-contact form: "Inroad: Targeted Outreach Platform"). The logo mark source of truth is `frontend/src/assets/logo.svg` — a capital-"I" monogram on a rounded-square ("squircle") badge. The persistent logged-in header (`AppHeader` on `/` and `/history`) shows the mark + "Inroad" wordmark with an always-visible "Targeted Outreach Platform" caption, plus main nav links (Search → `/`, History → `/history`); login/signup use the full form as the page heading with the mark above it.
+**Decision:** Product brand is **Inroad** (full first-contact form: "Inroad: Targeted Outreach Platform"). The logo mark source of truth is `frontend/src/assets/logo.svg` — a capital-"I" monogram on a rounded-square ("squircle") badge. The persistent logged-in header (`AppHeader` on `/`, `/history`, and `/analytics`) shows the mark + "Inroad" wordmark with an always-visible "Targeted Outreach Platform" caption, plus main nav links (Search → `/`, History → `/history`, Analytics → `/analytics`); login/signup use the full form as the page heading with the mark above it.
 
 **Color palette:** Taken from existing `frontend/src/index.css` tokens — badge fill `--accent` (`#1f6b5a`), letter fill `--bg` (`#f7f6f4`). No new brand palette was invented for the mark.
 
@@ -377,7 +377,7 @@ class CompanySearchResponse(BaseModel):
 
 **Decision:** A dedicated protected route `/history` (`HistoryPage`) lists past `GENERATED_EMAILS` rows, shows which have logged outcomes, lets the user log **any** `OutcomeEventType` against any row, and retract mistaken logs. This is the Slice 2b frontend consumer of Slice 2a's `GET /generated-emails` + `POST /outcomes/{id}/retract`, plus the existing `GET /outcomes` / `POST /outcomes`. FRAME 6's Mark as Sent remains a separate surface (current-email-only `sent`) and is unchanged.
 
-**Routing / nav:** Wrapped in the same `ProtectedRoute` as `/`. `AppHeader` gained Search / History `NavLink`s (previously brand + page-local actions only — no shared layout wrapper; each page still mounts `AppHeader` itself).
+**Routing / nav:** Wrapped in the same `ProtectedRoute` as `/`. `AppHeader` gained Search / History / Analytics `NavLink`s (previously brand + page-local actions only — no shared layout wrapper; each page still mounts `AppHeader` itself). Analytics was added in the §10 slice; History was the first nav link beyond brand+actions.
 
 **No sessionStorage (deliberate contrast with §8.2.2):** `/history` does **not** persist list or detail state in `sessionStorage`. On `/`, `discoveryFlow` exists specifically to avoid re-spending LLM/provider credits on refresh. `GET /generated-emails` and `GET /outcomes` are free, idempotent reads — refetching on mount/refresh is simpler and correct. Leaving that contrast undocumented would look like a forgotten feature; it is intentional.
 
@@ -410,9 +410,72 @@ Both create/list and retract require `get_current_user`. No pagination in v1 (sa
 
 **Why `user_id` is denormalized on `OUTCOMES` but not on `GENERATED_EMAILS`:** List/analytics reads filter `Outcome.user_id == current_user.id` with no join. That is the payoff of denormalizing for a locked per-user analytics read pattern. `GENERATED_EMAILS` still uses the Resume join for ownership (deferred denormalization — see `OPEN_QUESTIONS.md`). The divergence is deliberate; do not "fix" one to match the other without re-reading both decisions.
 
-**CRITICAL DISCIPLINE — all OUTCOMES reads go through `app/services/outcomes.py`:** Every read of OUTCOMES (current `list_outcomes`, and any future analytics query) MUST go through this service module rather than a fresh ad-hoc query written elsewhere. That is what keeps the `voided=false` filter from being silently forgotten by a future read path. Stated in the module docstring as well as here — code, not just docs.
+**CRITICAL DISCIPLINE — all OUTCOMES reads go through `app/services/outcomes.py`:** Every read of OUTCOMES (current `list_outcomes`, and analytics via that helper in §10) MUST go through this service module rather than a fresh ad-hoc query written elsewhere. That is what keeps the `voided=false` filter from being silently forgotten by a future read path. Stated in the module docstring as well as here — code, not just docs.
 
 **Related — generated-email list (picker support):** `GET /generated-emails` → `list[GeneratedEmailListOut]` (ownership via the same Resume join as GET-by-id; joins Contact/Company for display fields; does **not** join outcome status). Documented in `DATA_MODEL.md` §2.7; lives in `app/services/generated_emails.py` / `app/routers/generated_emails.py`.
 
 **Schemas:** `OutcomeCreate` / `OutcomeOut` in `app/schemas/outcome.py`. `OutcomeOut` omits `user_id` (auth-scoped reads) but includes `voided` so the retract response can confirm the resulting state (list responses still exclude voided rows, so `voided` there always reads `false`). `OutcomeEventType` is imported from `app/core/enums.py`.
+
+---
+
+## 10. Analytics: Reply-Rate Summary (Computed on Read)
+
+**Decision:** MVP feature #7 — reply rate broken down by contact confidence tier and by email eval score — ships as `GET /analytics/summary` → `AnalyticsSummary`. No new tables, no migrations, no caching/precomputation. Aggregate fresh on every request.
+
+**Endpoint:** `GET /analytics/summary` behind `get_current_user`. Thin router (`app/routers/analytics.py`) calls `get_reply_rate_summary` in `app/services/analytics.py`.
+
+### 10.1 Pure compute / DB orchestration split
+
+**Decision:** `analytics.py` mirrors the `eval.py` / `matching.py` precedent — a pure function `_compute_summary(outcomes, emails) -> AnalyticsSummary` with no DB session / no `current_user`, plus a thin DB-touching wrapper `get_reply_rate_summary(db, current_user)` that loads data and delegates.
+
+**Reasoning:** Same testability reason as ARCHITECTURE.md §2 ("services are unit-testable without a DB/HTTP layer"). Reply-rate math has several easy-to-get-wrong edge cases (dedup, boundary buckets, null-vs-zero rates); exhaustive unit tests against the pure function catch those without a Postgres fixture.
+
+### 10.2 Entity-read discipline
+
+**Decision:**
+- Outcomes come only from `outcomes.list_outcomes(db, current_user)` — analytics never queries `Outcome` directly. That keeps the `voided=false` filter from being silently forgotten (same CRITICAL DISCIPLINE as §9).
+- Generated-email fields (id, `eval_score`, contact `best_verification_tier`) come only from a new helper `list_generated_emails_for_analytics` in `generated_emails.py` — analytics never queries `GeneratedEmail` or `Contact` directly. Same "one file owns reads of its entity" rule already enforced for OUTCOMES, now extended to GeneratedEmail.
+
+Internal return shape is a frozen dataclass `GeneratedEmailAnalyticsFields` — not a client-facing Pydantic Out (never crosses the API boundary).
+
+### 10.3 Locked numerator / denominator / bucketing / n= rules
+
+**Numerator (replied):** an email counts once if it has ≥1 non-voided outcome with `event_type` in `{REPLIED, INTERVIEW}` **and** is also in the denominator. Dedup by `generated_email_id` — multiple REPLIED/INTERVIEW rows for the same email still count once. INTERVIEW alone (no separate REPLIED row) still counts as replied.
+
+**Denominator (sent):** an email counts once if it has ≥1 non-voided `SENT` outcome. Dedup by `generated_email_id`. Do **not** use "every row in GENERATED_EMAILS" — a generated email the user never marked Sent is excluded from the overall total and from every breakdown bucket.
+
+**Confidence-tier breakdown:** uses `Contact.best_verification_tier` directly (existing 4-value enum) — no numeric rebinning.
+
+**Eval-score breakdown:** fixed buckets on `GeneratedEmail.eval_score` with locked boundary inclusivity (stated in code comments on `_eval_score_bucket`):
+- `"<3"` = `[0, 3)` — includes 0, excludes 3.0
+- `"3-4"` = `[3, 4)` — includes 3.0, excludes 4.0
+- `"4+"` = `[4, 5]` — includes 4.0 and 5.0
+
+**Two separate lists, not a cross-tab:** tier and eval-score breakdowns are independent. Cross-tabbing was explicitly rejected for v1 — it fragments an already-small sample into near-empty cells. Revisit once real volume exists (see `OPEN_QUESTIONS.md`).
+
+**Sample size always shown; omit empty buckets:** every displayed rate shows its `n=` (sent count). A bucket with `sent == 0` is **omitted** from its breakdown list entirely (not shown as `n=0`). A bucket with `sent > 0` and `replied == 0` **is** shown, with `reply_rate=0.0` (real measured zero ≠ no data). The overall summary (`total_sent`, `total_replied`, `overall_reply_rate`) is always returned even when zero — it is the top-level fact, not a bucket.
+
+**Null vs 0.0 for rates:** `overall_reply_rate` and any per-bucket `reply_rate` is `null`/`None` when that scope's sent count is 0 — never fabricate a `0.0` for "no data," only for "data that measured zero." Per-bucket rows are only emitted when `sent > 0`, so their `reply_rate` is never null in the response schema.
+
+**Interaction with retract (expected, not a bug):** if a `SENT` outcome is
+retracted while a `REPLIED`/`INTERVIEW` outcome for the same email is still
+active, that email drops out of `sent_ids` entirely — so it disappears from
+`total_sent`, `total_replied`, and every breakdown bucket, even though the
+reply is still recorded, non-voided, in `OUTCOMES`. Direct consequence of
+`sent_and_replied = sent_ids ∩ replied_ids` requiring both; not special-cased.
+Same precedent as `/history`'s documented "retract can drop a row from the
+default Logged filter" behavior (§8.6) — worth remembering if a `REPLIED` row
+visibly exists in the DB but isn't reflected in `/analytics`.
+
+### 10.4 No caching
+
+**Decision:** Aggregate fresh on every GET. No Redis, no materialized view, no precomputed summary table.
+
+**Reasoning:** Same "don't add infra ahead of evidence" judgment already locked for Redis in §5.1. This endpoint's read volume is trivially low (personal analytics, not a high-throughput dashboard). Revisiting would require measured evidence that re-aggregation is a bottleneck — not a hypothetical preference for "analytics usually caches."
+
+### 10.5 Frontend (`/analytics`)
+
+**Decision:** Protected route `/analytics` (`AnalyticsPage`), same `ProtectedRoute` pattern as `/` and `/history`. `AppHeader` nav: Search / History / Analytics. `useQuery` (not `useMutation`) for `GET /analytics/summary` — free, idempotent read, same reasoning as `/history` §8.6. No `sessionStorage`. Types/API in `lib/analyticsTypes.ts` + `lib/analyticsApi.ts`. UI shows overall rate with `n=`, the two breakdown lists, a clear "no sent emails logged yet" empty state when `overall_reply_rate` is null, and a short caveat that early sample sizes are directional rather than statistically significant.
+
+---
 
