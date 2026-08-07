@@ -4,12 +4,21 @@ DB-touching caller of the pure LLM services in ``matching.py``,
 ``email_generation.py``, and ``eval.py``. Always INSERTs a new row — never
 overwrites an existing (contact, resume, JD) triple — so future OUTCOMES
 rows retain a stable FK target.
+
+CRITICAL DISCIPLINE: every read of ``GENERATED_EMAILS`` (and Contact fields
+joined for those reads) goes through this module — including the analytics
+helper below. ``analytics.py`` must not query ``GeneratedEmail`` or
+``Contact`` directly (same "one file owns reads of its entity" rule already
+enforced for OUTCOMES in ``outcomes.py``).
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from sqlalchemy.orm import Session
 
+from app.core.enums import VerificationTier
 from app.core.exceptions import NotFoundError, ValidationError
 from app.models.company import Company
 from app.models.contact import Contact
@@ -24,6 +33,16 @@ from app.services import resume as resume_service
 from app.services.email_generation import generate_email
 from app.services.eval import evaluate_with_retry
 from app.services.matching import generate_match_data
+
+
+@dataclass(frozen=True)
+class GeneratedEmailAnalyticsFields:
+    """Internal shape for analytics aggregation — never crosses the API boundary."""
+
+    id: int
+    eval_score: float
+    best_verification_tier: VerificationTier
+
 
 # Standalone valediction phrases only — matched against a whole line after
 # trimming whitespace and a single trailing comma/period. Substrings inside
@@ -165,6 +184,37 @@ def list_generated_emails(
             eval_score=row.eval_score,
             gate_passed=row.gate_passed,
             created_at=row.created_at,
+        )
+        for row in rows
+    ]
+
+
+def list_generated_emails_for_analytics(
+    db: Session, user: User
+) -> list[GeneratedEmailAnalyticsFields]:
+    """Return id / eval_score / contact tier for the caller's generated emails.
+
+    Ownership uses the same Resume-join as ``get_generated_email_by_id`` and
+    ``list_generated_emails``. Joins ``Contact`` only for
+    ``best_verification_tier``. Internal consumers only (analytics service).
+    """
+    rows = (
+        db.query(
+            GeneratedEmail.id,
+            GeneratedEmail.eval_score,
+            Contact.best_verification_tier,
+        )
+        .join(Resume, GeneratedEmail.resume_id == Resume.id)
+        .join(Contact, GeneratedEmail.contact_id == Contact.id)
+        .filter(Resume.user_id == user.id)
+        .order_by(GeneratedEmail.id.asc())
+        .all()
+    )
+    return [
+        GeneratedEmailAnalyticsFields(
+            id=row.id,
+            eval_score=row.eval_score,
+            best_verification_tier=row.best_verification_tier,
         )
         for row in rows
     ]

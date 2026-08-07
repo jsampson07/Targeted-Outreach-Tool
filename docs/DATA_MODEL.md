@@ -374,6 +374,33 @@ class RefreshTokenOut(BaseModel):
 
 **Reasoning:** Added during Phase 1 planning as a direct consequence of the JWT auth-flow decision (see `OPEN_QUESTIONS.md`'s "Resolved" section): the refresh token is deliberately an opaque random string, not a JWT, so it can be revoked before its natural expiry — logout only works if something persists to revoke. `token_hash` (not the raw token) is what's stored, mirroring the same reasoning as `UserCreate.password` vs. the ORM's `password_hash` column in §2.1 — never persist a secret in a form that's directly usable if the row leaks. `token_hash` carries a unique index for the same lookup-performance reasoning as `Company.domain` in `ARCHITECTURE.md` §5 — the refresh endpoint looks a presented token up by its hash on every call.
 
+### 2.10 AnalyticsSummary (computed on read — no backing table)
+
+```python
+class ConfidenceTierBreakdown(BaseModel):
+    tier: VerificationTier
+    sent: int
+    replied: int
+    reply_rate: float  # never null — rows only emitted when sent > 0
+
+class EvalScoreBucketBreakdown(BaseModel):
+    bucket: Literal["<3", "3-4", "4+"]
+    sent: int
+    replied: int
+    reply_rate: float  # never null — same guarantee as tier rows
+
+class AnalyticsSummary(BaseModel):
+    total_sent: int
+    total_replied: int
+    overall_reply_rate: float | None  # None when total_sent == 0
+    by_confidence_tier: list[ConfidenceTierBreakdown]
+    by_eval_score_bucket: list[EvalScoreBucketBreakdown]
+```
+
+**Decision:** These schemas back `GET /analytics/summary` only. They are **computed on every read** from existing `OUTCOMES` + `GENERATED_EMAILS` / `CONTACTS` data — **not persisted**, **no migration**, no new table. Same category as `CompanySearchResponse` / `ContactDiscoveryResponse`: response shapes with no backing storage. Aggregation rules (numerator/denominator, eval-score bucket boundaries, omit-empty-buckets, null-vs-0.0 rates) are locked in `ARCHITECTURE.md` §10 — this section only records the API shapes.
+
+**Decision:** Tier and eval-score are two **separate** lists on `AnalyticsSummary`, not a cross-tabulated matrix. Cross-tabbing was explicitly rejected for v1 (see `ARCHITECTURE.md` §10 / `OPEN_QUESTIONS.md`).
+
 ---
 
 ## 3. Alembic Migration Plan

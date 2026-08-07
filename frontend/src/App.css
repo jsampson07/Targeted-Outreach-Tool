@@ -701,3 +701,62 @@
 .log-outcome-form .auth-error {
   flex-basis: 100%;
 }
+
+.analytics-caveat {
+  max-width: 40rem;
+}
+
+.analytics-overall {
+  margin: 0 0 1.5rem;
+}
+
+.analytics-overall-stat {
+  margin: 0;
+  color: var(--text-h);
+  font-size: 1.15rem;
+  font-weight: 600;
+}
+
+.analytics-breakdown {
+  margin: 0 0 1.5rem;
+}
+
+.analytics-breakdown-heading {
+  margin: 0 0 0.65rem;
+  color: var(--text-h);
+  font-size: 1.1rem;
+}
+
+.analytics-breakdown-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.analytics-breakdown-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.35rem 1rem;
+  color: var(--text-h);
+}
+
+.analytics-breakdown-label {
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.analytics-breakdown-stat {
+  font-size: 0.95rem;
+}
+
+.analytics-n {
+  color: var(--text);
+  font-weight: 400;
+  font-size: 0.9rem;
+}
+
